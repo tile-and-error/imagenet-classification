@@ -1,25 +1,61 @@
+# Prerequisites
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/), the Python package and project manager.
+
+## Set up the virtual environment
+
+From the repository root:
+
+1. **Create the virtual environment** (uv uses the Python version in `.python-version` and downloads it if needed):
+   ```bash
+   uv venv
+   ```
+2. **Install the requirements** from `requirements.txt` into it:
+   ```bash
+   uv pip install -r requirements.txt
+   ```
+3. **Activate the virtual environment:**
+
+   ```bash
+   source .venv/bin/activate        # macOS / Linux (bash, zsh)
+   source .venv/bin/activate.fish   # fish
+   .venv\Scripts\activate           # Windows
+   ```
+
+   Run `deactivate` to leave it.
+
+4. **Verify correct Python binary:**
+   ```bash
+   which python     # macOS / Linux
+   where.exe python # Windows
+   ```
+
 # Datasets
 
 `download_data.py` downloads a dataset, sorts it into a standard folder layout and checks that nothing is missing. Everyone runs the same command, so everyone ends up with the same data.
 
-| Dataset | Command name | Download size | Classes | Train | Test |
-|---|---|---|---|---|---|
-| ImageNet-1k (ILSVRC 2012) | `imagenet-1k` | ~150 GB | 1000 | 1,281,167 | 50,000 (official validation set) |
-| Tiny ImageNet | `tiny-imagenet` | ~160 MB | 200 | 100,000 | 10,000 |
+| Dataset                   | Command name    | Download size | Classes | Train     | Test                             |
+| ------------------------- | --------------- | ------------- | ------- | --------- | -------------------------------- |
+| ImageNet-1k (ILSVRC 2012) | `imagenet-1k`   | ~150 GB       | 1000    | 1,281,167 | 50,000 (official validation set) |
+| Tiny ImageNet             | `tiny-imagenet` | ~160 MB       | 200     | 100,000   | 10,000                           |
 
 Use `tiny-imagenet` to try the script out before downloading ImageNet-1k.
 
 ## 1. Set up Hugging Face access (once per person)
 
 1. **Log in** to [huggingface.co](https://huggingface.co), or create a free account.
-2.  **Create a read token:** go to [Settings → Access Tokens](https://huggingface.co/settings/tokens), click **Create new token**, choose the **Read** role and copy the token.
+2. **Create a read token:** go to [Settings → Access Tokens](https://huggingface.co/settings/tokens), click **Create new token**, choose the **Read** role and copy the token.
 3. **Install the requirements and log in from the terminal:**
+   - NOTE: You should be in the virtual environment for `hf` CLI to be in PATH.
    ```bash
    pip install huggingface_hub pyarrow
    hf auth login        # paste the token when asked
    ```
 
 ## 2. Download
+
+> [!IMPORTANT]
+> Some datasets are gated. Before downloading, open the dataset's Hugging Face page (e.g. [ILSVRC/imagenet-1k](https://huggingface.co/datasets/ILSVRC/imagenet-1k)) and accept the terms, otherwise the download fails with an [access error](#huggingface-access-error).
 
 Run these from the folder containing `download_data.py`:
 
@@ -65,3 +101,16 @@ Class folders are named by label number.
    "my-dataset": (download_my_dataset, {"train": (10, 8000), "test": (10, 2000)}),
    ```
 3. **Test it** with `python download_data.py my-dataset /path/to/data/my-dataset`, then commit the change. Everyone else then runs the same command.
+
+# Appendix
+
+## HuggingFace Access Error
+
+Example with `ILSVRC/imagenet-1k`:
+
+```
+Cannot access gated repo for url https://huggingface.co/datasets/ILSVRC/imagenet-1k/resolve/main/data/validation-00000-of-00014.parquet.
+Access to dataset ILSVRC/imagenet-1k is restricted and you are not in the authorized list. Visit https://huggingface.co/datasets/ILSVRC/imagenet-1k to ask for access.
+```
+
+**Fix:** open the dataset page, accept the terms, then run the command again ([back to Download](#2-download)).
