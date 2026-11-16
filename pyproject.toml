@@ -1,0 +1,10 @@
+[project]
+name = "imagenet-classification"
+version = "0.1.0"
+description = "Knowledge distillation of classifier on ImageNet dataset."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "huggingface-hub>=2.4.0",
+    "pyarrow>=26.0.1",
+]
