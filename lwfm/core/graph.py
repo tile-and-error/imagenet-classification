@@ -87,7 +87,7 @@ class ExecutionGraph(nn.Module):
             outputs |= node(*resolve_all(node.reads, batch, outputs))
         return outputs
 
-    def deployable_model(self, node: str = "student") -> nn.Module:
+    def deployable_model(self, node: str) -> nn.Module:
         """Return the node's module: a plain `nn.Module`, sharing the graph's weights.
 
         It has no names, graph or losses, so it can be saved, exported or wrapped
