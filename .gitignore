@@ -38,3 +38,5 @@ htmlcov/
 # Downloaded datasets and temporary shard downloads
 data/
 _download/
+
+.DS_Store/

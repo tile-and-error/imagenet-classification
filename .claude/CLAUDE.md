@@ -33,4 +33,5 @@ Every component is built on standard PyTorch primitives and nothing else — mod
 ## Style
 
 Concise, mathematical, specific. Check claims rather than build on them. `ruff` owns
-formatting and lint (see `pyproject.toml`).
+formatting and lint (see `pyproject.toml`). Keep the code self-documenting, don't add docstrings
+when you don't need to.
