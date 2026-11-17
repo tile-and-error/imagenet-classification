@@ -15,6 +15,11 @@ dependencies = [
     "pyarrow>=26.0.1",
 ]
 
+[project.optional-dependencies]
+examples = [
+    "ipykernel>=7.4.0",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

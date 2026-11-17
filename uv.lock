@@ -1323,9 +1323,15 @@ dependencies = [
     { name = "torchvision" },
 ]
 
+[package.optional-dependencies]
+examples = [
+    { name = "ipykernel" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "fvcore" },
+    { name = "ipykernel", marker = "extra == 'examples'", specifier = ">=7.4.0" },
     { name = "matplotlib" },
     { name = "pyarrow", specifier = ">=26.0.1" },
     { name = "pytest" },
@@ -1335,6 +1341,7 @@ requires-dist = [
     { name = "torch" },
     { name = "torchvision" },
 ]
+provides-extras = ["examples"]
 
 [[package]]
 name = "imagesize"

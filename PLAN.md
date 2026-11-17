@@ -105,7 +105,7 @@ Agents implement these defaults unless the team changes them in Phase 0. They ar
 
 | ID  | Decision               | Default and reason                                                                                                         | Status                                          |
 | --- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| D01 | Package                | `lwfm` package at the repository root (no `src/` folder)                                                                                       | **Provisional:** rename if the team prefers     |
+| D01 | Package                | `lwfm` package at the repository root (no `src/` folder)                                                                   | **Provisional:** rename if the team prefers     |
 | D02 | Python/PyTorch         | A Python version the **actual cluster** supports, with a matching locked PyTorch/torchvision/torchmetrics set              | **Verify on DCS**; do not hard-code Python 3.14 |
 | D03 | Building blocks        | `torch.nn.Module`, `Dataset`/`DataLoader`, `torch.optim.Optimizer`, `torchmetrics.Metric`; nothing else                    | Accepted                                        |
 | D04 | Data format            | Nested dict `{"inputs": ..., "targets": ..., "meta": ...}`; numbers are `Tensor`s. Torch tools already handle dicts (§3.1) | Accepted                                        |
@@ -533,56 +533,11 @@ class MetricBinding:
 
 ### 3.3 Using the building blocks
 
-These examples show how a researcher uses the code. They run on CPU with random data.
+**Runnable now:** [`examples/building_blocks.ipynb`](examples/building_blocks.ipynb) shows every example the current code supports, on CPU with random data: wrapping a model as a one-node graph, training it with your own loop, swapping the model (a ViT with a different argument name and a dict return) or the loss (a weighted mix), deploying and predicting on one image, and graph mistakes failing at build time.
 
-**1. Wrap any model as a one-node graph**
+**Not runnable yet.** The examples below need code that doesn't exist yet. Each one continues from the notebook (`graph`, `loss_fn`, `optimizer`, `CE_PORTS`). When its code lands, move the example into the notebook and delete it here.
 
-```python
-import torch
-from torchvision.models import resnet18
-
-from lwfm.core.graph import ExecutionGraph, ModelNode
-from lwfm.core.types import InputSpec
-from lwfm.models.adapters import InputAdapter
-
-student = ModelNode(
-    name="student",
-    module=resnet18(num_classes=10),  # untouched torchvision model
-    inputs={"x": "batch.inputs.image"},  # resnet18.forward(x)
-    outputs={"logits": "student.logits"},  # its single Tensor return
-    input_adapter=InputAdapter(InputSpec(image_size=(64, 64))),
-)
-graph = ExecutionGraph([student])
-
-batch = {
-    "inputs": {"image": torch.rand(8, 3, 96, 96)},  # resized to 64x64 by the adapter
-    "targets": {"class": torch.randint(0, 10, (8,))},
-    "meta": {"sample_id": [f"s{i}" for i in range(8)]},
-}
-out = graph(batch)  # {"student.logits": Tensor[8, 10]}
-```
-
-**2. Train it with your own loop.** The graph and composer are enough; the `Trainer` is a convenience, not a requirement.
-
-```python
-from torch import nn
-
-from lwfm.core.losses import LossBinding, LossComposer
-
-CE_PORTS = {"input": "student.logits", "target": "batch.targets.class"}
-loss_fn = LossComposer([LossBinding("ce", nn.CrossEntropyLoss(), CE_PORTS)])
-optimizer = torch.optim.SGD(graph.parameters(), lr=0.1)
-
-graph.train()
-for _ in range(20):  # overfit one batch: loss should fall
-    total, terms = loss_fn(batch, graph(batch))
-    optimizer.zero_grad()
-    total.backward()
-    optimizer.step()
-print(terms)  # {"ce": tensor(0.04)}
-```
-
-**3. The same with `Trainer` and `Evaluator`**
+**Trainer and Evaluator** (needs `Trainer`, `Evaluator`, `FakeClassificationDataModule` and `torchmetrics`)
 
 ```python
 from torchmetrics.classification import MulticlassAccuracy
@@ -607,7 +562,11 @@ Trainer().fit(
 
 PRED_PORTS = {"preds": "student.logits", "target": "batch.targets.class"}
 metrics = [
-    MetricBinding(f"top{k}", MulticlassAccuracy(num_classes=10, top_k=k), PRED_PORTS)
+    MetricBinding(
+        f"top{k}",
+        MulticlassAccuracy(num_classes=10, top_k=k, average="micro"),  # §3.6
+        PRED_PORTS,
+    )
     for k in (1, 5)
 ]
 result = Evaluator().evaluate(
@@ -616,78 +575,14 @@ result = Evaluator().evaluate(
 print(result.metrics)  # {"top1": 0.1, "top5": 0.5}
 ```
 
-**4. Swap one part; nothing else changes**
+**One more metric** (needs `torchmetrics`; continues from the example above). Adding a metric is one more binding; the `Evaluator` is unchanged.
 
 ```python
-# A model with a different argument name and a dict return. Only the node's maps change;
-# the loss and metrics still read "student.logits".
-class TinyViT(nn.Module):
-    def forward(self, pixels: torch.Tensor) -> dict[str, torch.Tensor]:
-        ...
-        return {"logits": logits, "cls_token": cls_token}
-
-
-student = ModelNode(
-    name="student",
-    module=TinyViT(num_classes=10),
-    inputs={"pixels": "batch.inputs.image"},
-    outputs={"logits": "student.logits", "cls_token": "student.features"},
-    input_adapter=InputAdapter(InputSpec(image_size=(64, 64))),
-)
-
-# A different loss, or a weighted mix: L = 0.9 * CE + 0.1 * margin.
-loss_fn = LossComposer(
-    [
-        LossBinding(
-            "ce", nn.CrossEntropyLoss(label_smoothing=0.1), CE_PORTS, weight=0.9
-        ),
-        LossBinding("margin", nn.MultiMarginLoss(), CE_PORTS, weight=0.1),
-    ]
-)
-
-# One more metric.
 from torchmetrics.classification import MulticlassF1Score
 
 metrics.append(
     MetricBinding("macro_f1", MulticlassF1Score(10, average="macro"), PRED_PORTS)
 )
-```
-
-**5. Deploy and predict on one image**
-
-```python
-from torchvision.io import ImageReadMode, read_image
-
-# InputAdapter + resnet18, a plain nn.Module
-model = graph.deployable_model("student").eval()
-torch.save(model.state_dict(), "model_weights.pt")
-
-# [3, H, W] in [0, 1]
-image = read_image("cat.jpg", mode=ImageReadMode.RGB).float() / 255
-with torch.inference_mode():
-    probs, classes = model(image[None]).softmax(-1).topk(5)
-```
-
-**6. Mistakes fail early, with the bad name**
-
-```python
-ExecutionGraph(
-    [
-        ModelNode(
-            "student",
-            resnet18(),
-            {"x": "batch.inputs.image"},
-            {"logits": "student.logits"},
-        ),
-        ModelNode(
-            "head",
-            nn.Linear(512, 10),
-            {"input": "studnet.features"},
-            {"out": "head.logits"},
-        ),
-    ]
-)
-# GraphError: 'head' reads 'studnet.features', which no node writes
 ```
 
 ### 3.4 Extending later, additively
@@ -874,7 +769,7 @@ class Evaluator:
 
 `TrainingResult.global_step: int`; `EvaluationResult.metrics: dict[str, float]`, keyed by binding name.
 
-**The trainer does:** move batches to the device, `graph.train()`, forward, loss, `backward()`, optimizer step and zero-grad, step counting, optional validation. It is the loop in §3.3 example 2 plus these. **It does not:** create runs or folders, read YAML, launch Slurm, or know which technique is in use. `event_sink=None` is the notebook default.
+**The trainer does:** move batches to the device, `graph.train()`, forward, loss, `backward()`, optimizer step and zero-grad, step counting, optional validation. It is the own-loop example in `examples/building_blocks.ipynb` (§3.3) plus these. **It does not:** create runs or folders, read YAML, launch Slurm, or know which technique is in use. `event_sink=None` is the notebook default.
 
 **The evaluator does:** reset each metric, `graph.eval()` under `torch.inference_mode()`, update every metric per batch, compute once at the end. Phase 1 reports **micro (global) top-1 and top-5** accuracy when `K >= 5`, the standard ImageNet definition; never a per-class (macro) average under those names. Names: `eval/val/top1`, `eval/val/top5`, and `eval/test/...` for the final test.
 

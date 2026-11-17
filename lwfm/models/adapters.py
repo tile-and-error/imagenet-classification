@@ -6,6 +6,16 @@ from lwfm.core.types import InputSpec
 
 
 class InputAdapter(nn.Module):
+    """Prepares images in `[0, 1]` for one model, as its `InputSpec` describes.
+
+    Resizes `[B, C, H, W]` images to `spec.image_size` only if their size differs,
+    then normalises with `(x - mean) / std`. Mean and std are buffers that move
+    with `.to()` but are not saved in `state_dict()`; they are rebuilt from the spec.
+    """
+
+    mean: Tensor
+    std: Tensor
+
     def __init__(self, spec: InputSpec):
         super().__init__()
         self.spec = spec

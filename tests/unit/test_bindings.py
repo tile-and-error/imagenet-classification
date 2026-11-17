@@ -5,7 +5,7 @@ from torch import nn
 from lwfm.core.losses import LossBinding, LossComposer
 from lwfm.evaluation.metrics import MetricBinding
 
-CE_PORTS = {"input": "student.logits", "target": "batch.targets.class"}
+CE_READS = ["student.logits", "targets.class"]
 
 
 @pytest.fixture
@@ -21,8 +21,8 @@ def outputs():
 def test_composer_is_weighted_sum_with_detached_terms(batch, outputs):
     composer = LossComposer(
         [
-            LossBinding("ce", nn.CrossEntropyLoss(), CE_PORTS, weight=0.7),
-            LossBinding("margin", nn.MultiMarginLoss(), CE_PORTS, weight=0.3),
+            LossBinding("ce", nn.CrossEntropyLoss(), CE_READS, weight=0.7),
+            LossBinding("margin", nn.MultiMarginLoss(), CE_READS, weight=0.3),
         ]
     )
     total, terms = composer(batch, outputs)
@@ -37,7 +37,7 @@ def test_composer_is_weighted_sum_with_detached_terms(batch, outputs):
 
 def test_plain_callable_loss_is_accepted(batch, outputs):
     composer = LossComposer(
-        [LossBinding("sq", lambda x: (x**2).mean(), {"x": "student.logits"})]
+        [LossBinding("sq", lambda x: (x**2).mean(), "student.logits")]
     )
     total, _ = composer(batch, outputs)
     assert total.ndim == 0
@@ -47,8 +47,8 @@ def test_loss_with_parameters_is_registered():
     learned = nn.Linear(3, 1)
     composer = LossComposer(
         [
-            LossBinding("l", lambda x: x.sum(), {"x": "a.y"}),
-            LossBinding("p", learned, {}),
+            LossBinding("l", lambda x: x.sum(), "a.y"),
+            LossBinding("p", learned, []),
         ]
     )
     assert {id(p) for p in composer.parameters()} == {
@@ -60,9 +60,13 @@ def test_loss_with_parameters_is_registered():
     "value", [torch.tensor(float("nan")), torch.ones(2)], ids=["nan", "not_scalar"]
 )
 def test_non_finite_or_non_scalar_loss_fails(batch, outputs, value):
-    composer = LossComposer([LossBinding("bad", lambda: value, {})])
+    composer = LossComposer([LossBinding("bad", lambda: value, [])])
     with pytest.raises(ValueError, match="bad"):
         composer(batch, outputs)
+
+
+def test_binding_accepts_one_name():
+    assert LossBinding("sq", lambda x: x, "student.logits").reads == ["student.logits"]
 
 
 def test_composer_needs_a_binding():
@@ -70,7 +74,7 @@ def test_composer_needs_a_binding():
         LossComposer([])
 
 
-def test_metric_binding_passes_resolved_ports_by_name(batch, outputs):
+def test_metric_binding_passes_values_in_order(batch, outputs):
     class Recorder:
         def __init__(self):
             self.calls = []
@@ -79,9 +83,7 @@ def test_metric_binding_passes_resolved_ports_by_name(batch, outputs):
             self.calls.append((preds, target))
 
     recorder = Recorder()
-    binding = MetricBinding(
-        "rec", recorder, {"preds": "student.logits", "target": "batch.targets.class"}
-    )
+    binding = MetricBinding("rec", recorder, ["student.logits", "targets.class"])
     binding.update(batch, outputs)
     binding.update(batch, outputs)
     assert len(recorder.calls) == 2
