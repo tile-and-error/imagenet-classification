@@ -105,7 +105,7 @@ Agents implement these defaults unless the team changes them in Phase 0. They ar
 
 | ID  | Decision               | Default and reason                                                                                                         | Status                                          |
 | --- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| D01 | Package                | `lwfm`, one `src/`-layout repository                                                                                       | **Provisional:** rename if the team prefers     |
+| D01 | Package                | `lwfm` package at the repository root (no `src/` folder)                                                                                       | **Provisional:** rename if the team prefers     |
 | D02 | Python/PyTorch         | A Python version the **actual cluster** supports, with a matching locked PyTorch/torchvision/torchmetrics set              | **Verify on DCS**; do not hard-code Python 3.14 |
 | D03 | Building blocks        | `torch.nn.Module`, `Dataset`/`DataLoader`, `torch.optim.Optimizer`, `torchmetrics.Metric`; nothing else                    | Accepted                                        |
 | D04 | Data format            | Nested dict `{"inputs": ..., "targets": ..., "meta": ...}`; numbers are `Tensor`s. Torch tools already handle dicts (§3.1) | Accepted                                        |
@@ -141,7 +141,7 @@ Agents implement these defaults unless the team changes them in Phase 0. They ar
 
 ## 3. Public interfaces
 
-These live in `src/lwfm/` (mostly `core/`), and tests pin their behaviour. Signatures here are the target API. Names or types may be refined only if behaviour stays the same and the tests are updated.
+These live in `lwfm/` (mostly `core/`), and tests pin their behaviour. Signatures here are the target API. Names or types may be refined only if behaviour stays the same and the tests are updated.
 
 §3.1–3.4 cover the **graph building blocks**: the minimum needed for one node that takes a batch of images and returns class scores. §3.5–3.9 cover the services built on top of them.
 
@@ -311,7 +311,7 @@ sequenceDiagram
 **Minimal implementation (Phase 1).** About 100 lines in total. It is complete enough to train a model; later phases add to it (§3.4) rather than replace it.
 
 ```python
-# src/lwfm/core/ports.py
+# lwfm/core/ports.py
 from typing import Any
 
 from torch import Tensor
@@ -346,7 +346,7 @@ def resolve_all(
 ```
 
 ```python
-# src/lwfm/core/graph.py
+# lwfm/core/graph.py
 from torch import Tensor, nn
 
 from lwfm.core.ports import Batch, Port, resolve_all
@@ -425,7 +425,7 @@ def run_order(nodes: list[ModelNode]) -> list[str]:
 ```
 
 ```python
-# src/lwfm/core/types.py  (InputSpec)  and  src/lwfm/models/adapters.py  (InputAdapter)
+# lwfm/core/types.py  (InputSpec)  and  lwfm/models/adapters.py  (InputAdapter)
 from dataclasses import dataclass
 
 import torch
@@ -460,7 +460,7 @@ class InputAdapter(nn.Module):
 ```
 
 ```python
-# src/lwfm/core/losses.py
+# lwfm/core/losses.py
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -502,7 +502,7 @@ class LossComposer(nn.Module):
 ```
 
 ```python
-# src/lwfm/evaluation/metrics.py
+# lwfm/evaluation/metrics.py
 from dataclasses import dataclass
 
 from torch import Tensor
@@ -952,7 +952,7 @@ repository/
 │   │   └── imagenet100_resnet18.yaml
 │   ├── data/
 │   └── models/
-├── src/lwfm/
+├── lwfm/
 │   ├── __init__.py
 │   ├── run.py                 # CLI entry point (or cli/run.py)
 │   ├── infer.py               # single-image/batch inference CLI
