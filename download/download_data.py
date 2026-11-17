@@ -77,7 +77,7 @@ def download_imagenet_1k(out: Path, expected: dict) -> None:
     The real test set does not have publicly available labels.
     Class folders are 000-999: the same order pretrained ImageNet models output.
     """
-    # Test set first - it's small, so a problem shows up before the ~140 GB train 
+    # Test set first - it's small, so a problem shows up before the ~140 GB train
     # download.
     download_hf_parquet(
         out,
