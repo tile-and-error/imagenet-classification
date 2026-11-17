@@ -154,11 +154,11 @@ from typing import Any
 
 type Sample = dict[str, Any]
 type Batch = dict[str, Any]  # {"inputs": {...}, "targets": {...}, "meta": {...}}
-type Port = str              # "batch.inputs.image", "student.logits"
+type Port = str  # "batch.inputs.image", "student.logits"
 
 batch = {
-    "inputs": {"image": images},        # float32 [B, 3, H, W] in [0, 1]
-    "targets": {"class": labels},       # int64 [B]
+    "inputs": {"image": images},  # float32 [B, 3, H, W] in [0, 1]
+    "targets": {"class": labels},  # int64 [B]
     "meta": {"sample_id": sample_ids},  # list[str], length B
 }
 ```
@@ -547,9 +547,9 @@ from lwfm.models.adapters import InputAdapter
 
 student = ModelNode(
     name="student",
-    module=resnet18(num_classes=10),         # untouched torchvision model
-    inputs={"x": "batch.inputs.image"},      # resnet18.forward(x)
-    outputs={"logits": "student.logits"},    # its single Tensor return
+    module=resnet18(num_classes=10),  # untouched torchvision model
+    inputs={"x": "batch.inputs.image"},  # resnet18.forward(x)
+    outputs={"logits": "student.logits"},  # its single Tensor return
     input_adapter=InputAdapter(InputSpec(image_size=(64, 64))),
 )
 graph = ExecutionGraph([student])
@@ -596,8 +596,13 @@ data = FakeClassificationDataModule(num_classes=10, image_size=(64, 64), batch_s
 data.setup("fit")
 
 Trainer().fit(
-    graph, data.train_dataloader(), data.val_dataloader(), loss_fn, optimizer,
-    epochs=1, device=torch.device("cpu"),
+    graph,
+    data.train_dataloader(),
+    data.val_dataloader(),
+    loss_fn,
+    optimizer,
+    epochs=1,
+    device=torch.device("cpu"),
 )
 
 PRED_PORTS = {"preds": "student.logits", "target": "batch.targets.class"}
@@ -621,6 +626,7 @@ class TinyViT(nn.Module):
         ...
         return {"logits": logits, "cls_token": cls_token}
 
+
 student = ModelNode(
     name="student",
     module=TinyViT(num_classes=10),
@@ -630,15 +636,21 @@ student = ModelNode(
 )
 
 # A different loss, or a weighted mix: L = 0.9 * CE + 0.1 * margin.
-loss_fn = LossComposer([
-    LossBinding("ce", nn.CrossEntropyLoss(label_smoothing=0.1), CE_PORTS, weight=0.9),
-    LossBinding("margin", nn.MultiMarginLoss(), CE_PORTS, weight=0.1),
-])
+loss_fn = LossComposer(
+    [
+        LossBinding(
+            "ce", nn.CrossEntropyLoss(label_smoothing=0.1), CE_PORTS, weight=0.9
+        ),
+        LossBinding("margin", nn.MultiMarginLoss(), CE_PORTS, weight=0.1),
+    ]
+)
 
 # One more metric.
 from torchmetrics.classification import MulticlassF1Score
 
-metrics.append(MetricBinding("macro_f1", MulticlassF1Score(10, average="macro"), PRED_PORTS))
+metrics.append(
+    MetricBinding("macro_f1", MulticlassF1Score(10, average="macro"), PRED_PORTS)
+)
 ```
 
 **5. Deploy and predict on one image**
@@ -646,10 +658,12 @@ metrics.append(MetricBinding("macro_f1", MulticlassF1Score(10, average="macro"),
 ```python
 from torchvision.io import ImageReadMode, read_image
 
-model = graph.deployable_model("student").eval()  # InputAdapter + resnet18, a plain nn.Module
+# InputAdapter + resnet18, a plain nn.Module
+model = graph.deployable_model("student").eval()
 torch.save(model.state_dict(), "model_weights.pt")
 
-image = read_image("cat.jpg", mode=ImageReadMode.RGB).float() / 255  # [3, H, W] in [0, 1]
+# [3, H, W] in [0, 1]
+image = read_image("cat.jpg", mode=ImageReadMode.RGB).float() / 255
 with torch.inference_mode():
     probs, classes = model(image[None]).softmax(-1).topk(5)
 ```
@@ -657,10 +671,22 @@ with torch.inference_mode():
 **6. Mistakes fail early, with the bad name**
 
 ```python
-ExecutionGraph([
-    ModelNode("student", resnet18(), {"x": "batch.inputs.image"}, {"logits": "student.logits"}),
-    ModelNode("head", nn.Linear(512, 10), {"input": "studnet.features"}, {"out": "head.logits"}),
-])
+ExecutionGraph(
+    [
+        ModelNode(
+            "student",
+            resnet18(),
+            {"x": "batch.inputs.image"},
+            {"logits": "student.logits"},
+        ),
+        ModelNode(
+            "head",
+            nn.Linear(512, 10),
+            {"input": "studnet.features"},
+            {"out": "head.logits"},
+        ),
+    ]
+)
 # GraphError: 'head' reads 'studnet.features', which no node writes
 ```
 
@@ -691,14 +717,17 @@ _Why this is enough:_ the graph only knows a node through `name`, `inputs`, `out
 
 ```python
 class ModelNode(nn.Module):
-    def __init__(self, name, module, inputs, outputs, input_adapter=None, *, frozen=False):
+    def __init__(
+        self, name, module, inputs, outputs, input_adapter=None, *, frozen=False
+    ):
         ...  # Phase 1 body, unchanged
         self.frozen = frozen
         if frozen:
             self.module.requires_grad_(False).eval()
 
     def train(self, mode: bool = True):
-        return super().train(mode and not self.frozen)  # graph.train() can't wake a teacher
+        # graph.train() can't wake a frozen teacher
+        return super().train(mode and not self.frozen)
 
     def forward(self, **inputs):
         with torch.set_grad_enabled(torch.is_grad_enabled() and not self.frozen):
@@ -736,10 +765,12 @@ teacher = ModelNode(
 graph = ExecutionGraph([student, teacher])  # same class, two nodes
 
 KD_PORTS = {"student": "student.logits", "teacher": "teacher.logits"}
-loss_fn = LossComposer([
-    LossBinding("ce", nn.CrossEntropyLoss(), CE_PORTS, weight=0.5),
-    LossBinding("kd", KDLoss(temperature=4.0), KD_PORTS, weight=0.5),
-])
+loss_fn = LossComposer(
+    [
+        LossBinding("ce", nn.CrossEntropyLoss(), CE_PORTS, weight=0.5),
+        LossBinding("kd", KDLoss(temperature=4.0), KD_PORTS, weight=0.5),
+    ]
+)
 optimizer = torch.optim.SGD((p for p in graph.parameters() if p.requires_grad), lr=0.1)
 # Trainer, Evaluator, metrics and deployable_model("student") are unchanged.
 ```
@@ -769,7 +800,8 @@ from abc import ABC, abstractmethod
 
 class DataModule(ABC):
     @abstractmethod
-    def prepare_data(self) -> None: ...  # check (or later download) data; safe to call twice
+    # Check (or later download) data; safe to call twice.
+    def prepare_data(self) -> None: ...
 
     @abstractmethod
     def setup(self, stage: str) -> None: ...
@@ -857,8 +889,8 @@ class Evaluator:
 ```python
 @dataclass(frozen=True)
 class ArtifactRef:
-    kind: str            # "torch_checkpoint", "metrics", "model_export"
-    path: str            # inside the run directory, or an approved external path
+    kind: str  # "torch_checkpoint", "metrics", "model_export"
+    path: str  # inside the run directory, or an approved external path
     producer_stage: str
     sha256: str | None = None
 
@@ -910,9 +942,9 @@ Phase 1: `ParameterCount`, `ModelSize`, `ForwardLatency`; `Throughput` if trivia
 ```python
 @dataclass
 class RunEvent:
-    kind: str           # scalar | table | artifact | status | message
+    kind: str  # scalar | table | artifact | status | message
     name: str
-    value: object       # JSON-safe data, or an ArtifactRef
+    value: object  # JSON-safe data, or an ArtifactRef
     stage: str | None = None
     step: int | None = None
     timestamp_utc: str | None = None
