@@ -12,6 +12,7 @@ dependencies = [
     "fvcore",
     "ruff",
     "pytest",
+    "pyarrow>=26.0.1",
 ]
 
 [tool.pytest.ini_options]
