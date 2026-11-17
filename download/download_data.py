@@ -2,7 +2,8 @@
 """Download a dataset into <out>/<split>/<class>/<images>.
 
     python download_data.py imagenet-1k /path/to/data/imagenet-1k
-    python download_data.py tiny-imagenet /path/to/data/tiny-imagenet   # ~160 MB, for testing
+    python download_data.py tiny-imagenet /path/to/data/tiny-imagenet   # ~160 MB, for
+                                                                        # testing
 
 Re-run the same command to resume an interrupted download or to re-check a finished one.
 
@@ -22,9 +23,11 @@ from huggingface_hub import HfApi, hf_hub_download
 
 
 def download_hf_parquet(out: Path, expected: dict, repo: str, splits: list) -> None:
-    """Download a Hugging Face parquet dataset one file at a time into <out>/<split>/<label>/.
+    """Download a Hugging Face parquet dataset one file at a time into
+    <out>/<split>/<label>/.
 
-    splits: [(file pattern in the repo, local split name), ...], downloaded in that order.
+    splits: [(file pattern in the repo, local split name), ...], downloaded in that
+        order.
     Class folders are the zero-padded label numbers: 000, 001, ...
     """
     files = HfApi().list_repo_files(repo, repo_type="dataset")
@@ -44,7 +47,9 @@ def download_hf_parquet(out: Path, expected: dict, repo: str, splits: list) -> N
                 batch_size=256, columns=["image", "label"]
             ):
                 for image, label in zip(
-                    batch.column("image").to_pylist(), batch.column("label").to_pylist()
+                    batch.column("image").to_pylist(),
+                    batch.column("label").to_pylist(),
+                    strict=False,
                 ):
                     class_dir = out / split / f"{label:03d}"
                     class_dir.mkdir(parents=True, exist_ok=True)
@@ -72,7 +77,8 @@ def download_imagenet_1k(out: Path, expected: dict) -> None:
     The real test set does not have publicly available labels.
     Class folders are 000-999: the same order pretrained ImageNet models output.
     """
-    # Test set first - it's small, so a problem shows up before the ~140 GB train download.
+    # Test set first - it's small, so a problem shows up before the ~140 GB train 
+    # download.
     download_hf_parquet(
         out,
         expected,
