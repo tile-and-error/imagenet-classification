@@ -1,108 +1,45 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>1. The idea</title>
-    <link rel="stylesheet" href="assets/style.css" />
-    <link
-      rel="stylesheet"
-      media="(prefers-color-scheme: light)"
-      href="assets/vendor/hljs-github.min.css"
-    />
-    <link
-      rel="stylesheet"
-      media="(prefers-color-scheme: dark)"
-      href="assets/vendor/hljs-github-dark.min.css"
-    />
-    <script src="assets/vendor/hljs-highlight.min.js"></script>
-    <script src="assets/vendor/hljs-python.min.js"></script>
-    <script src="assets/vendor/hljs-bash.min.js"></script>
-    <script src="assets/vendor/mermaid.min.js"></script>
-    <script>
-      const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      mermaid.initialize({
-        startOnLoad: true,
-        theme: dark ? "dark" : "default",
-        securityLevel: "strict",
-      });
-    </script>
-    <script src="assets/nav.js" defer></script>
-  </head>
-  <body>
-    <main>
-      <header class="top">
-        <a href="index.html">lwfm tutorial</a><span>1 / 12</span>
-        <span
-          ><code class="t">torch</code> PyTorch &nbsp;
-          <code class="l">lwfm</code> ours</span
-        >
-      </header>
-      <h1>1. The idea</h1>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1. The idea</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><a href="index.html">lwfm tutorial</a><span>1 / 12</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>1. The idea</h1>
 
-      <p class="lead">
-        We train a <strong>small model</strong> (the student) to copy a
-        <strong>large, frozen model</strong> (the teacher), so the student gets
-        close to the teacher's quality at a fraction of the cost. This is
-        knowledge distillation.
-      </p>
-      <ul>
-        <li>
-          We prove the method on <strong>ImageNet</strong> first, then move to
-          <strong>pathology slides</strong> (WSIs: whole-slide images). The move
-          should change the data and the teachers, not the code.
-        </li>
-        <li>
-          Every part is <strong>swappable</strong>: data, teacher(s), student,
-          losses, metrics, where results are saved.
-        </li>
-      </ul>
+<p class="lead">We train a <strong>small model</strong> (the student) to copy a <strong>large, frozen model</strong> (the teacher), so the student gets close to the teacher's quality at a fraction of the cost. This is knowledge distillation.</p>
+<ul>
+  <li>We prove the method on <strong>ImageNet</strong> first, then move to <strong>pathology slides</strong> (WSIs: whole-slide images). The move should change the data and the teachers, not the code.</li>
+  <li>Every part is <strong>swappable</strong>: data, teacher(s), student, losses, metrics, where results are saved.</li>
+</ul>
 
-      <h3>The one rule: PyTorch all the way down</h3>
-      <p>
-        Every object you train or run is an ordinary PyTorch object. Our
-        framework adds <strong>wiring</strong> (which value goes where) and
-        <strong>record-keeping</strong> (what happened in a run). It never
-        replaces PyTorch.
-      </p>
-      <table>
-        <tr>
-          <th>You keep using</th>
-          <th>lwfm adds</th>
-        </tr>
-        <tr>
-          <td>
-            <code class="t">nn.Module</code>,
-            <code class="t">nn.Sequential</code>,
-            <code class="t">torch.optim.SGD</code>,
-            <code class="t">nn.CrossEntropyLoss</code>,
-            <code class="t">DataLoader</code>
-          </td>
-          <td>
-            <code class="l">ModelNode</code>,
-            <code class="l">ExecutionGraph</code>,
-            <code class="l">LossBinding</code>,
-            <code class="l">MetricBinding</code>,
-            <code class="l">Evaluator</code>,
-            <code class="l">OutputRouter</code>
-          </td>
-        </tr>
-      </table>
-      <div class="why">
-        <strong>Why?</strong> A model proven here must later run in TIAToolbox
-        and, eventually, on small hardware. If it is a plain PyTorch module, it
-        can be saved, profiled, exported or wrapped with normal PyTorch tools,
-        without first being pulled out of a framework.
-      </div>
-    </main>
-    <nav class="pager">
-      <a rel="prev" href="index.html">← lwfm: how the framework works</a
-      ><a rel="next" href="02-pipeline.html"
-        >2. Think of a pipeline as objects →</a
-      >
-    </nav>
-    <script>
-      hljs.highlightAll();
-    </script>
-  </body>
+<h3>The one rule: PyTorch all the way down</h3>
+<p>Every object you train or run is an ordinary PyTorch object. Our framework adds <strong>wiring</strong> (which value goes where) and <strong>record-keeping</strong> (what happened in a run). It never replaces PyTorch.</p>
+<table>
+  <tr><th>You keep using</th><th>lwfm adds</th></tr>
+  <tr><td><code class="t">nn.Module</code>, <code class="t">nn.Sequential</code>, <code class="t">torch.optim.SGD</code>, <code class="t">nn.CrossEntropyLoss</code>, <code class="t">DataLoader</code></td>
+      <td><code class="l">ModelNode</code>, <code class="l">ExecutionGraph</code>, <code class="l">LossBinding</code>, <code class="l">MetricBinding</code>, <code class="l">Evaluator</code>, <code class="l">OutputRouter</code></td></tr>
+</table>
+<div class="why"><strong>Why?</strong> A model proven here must later run in TIAToolbox and, eventually, on small hardware. If it is a plain PyTorch module, it can be saved, profiled, exported or wrapped with normal PyTorch tools, without first being pulled out of a framework.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="index.html">← lwfm: how the framework works</a><a rel="next" href="02-pipeline.html">2. Think of a pipeline as objects →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
 </html>

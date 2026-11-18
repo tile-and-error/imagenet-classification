@@ -32,3 +32,11 @@ def resolve_all(
 
 def as_list(names: Name | Sequence[Name]) -> list[Name]:
     return [names] if isinstance(names, str) else list(names)
+
+
+def describe(names: Sequence[Name], values: Sequence[Any]) -> str:
+    """`"student.logits (8, 10), targets.class (8,)"`: for error notes."""
+    return ", ".join(
+        f"{n} {tuple(v.shape) if isinstance(v, Tensor) else type(v).__name__}"
+        for n, v in zip(names, values, strict=True)
+    )

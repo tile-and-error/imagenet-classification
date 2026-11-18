@@ -104,7 +104,7 @@ def test_duplicate_writes_fail():
 
 
 def test_one_node_graph_reads_batch_and_returns_flat_names(batch):
-    graph = ExecutionGraph([student()])
+    graph = ExecutionGraph([student()], sample=batch)
     out = graph(batch)
     assert set(out) == {"student.y"}
     torch.testing.assert_close(out["student.y"], 2 * batch["inputs"]["image"])
@@ -116,7 +116,8 @@ def test_nodes_run_in_dependency_order_not_list_order(batch):
             ModelNode("c", Sub(), reads=["b.y", "a.y"], writes="y"),
             ModelNode("b", Scale(), reads="a.y", writes="y"),
             ModelNode("a", Scale(), reads="inputs.image", writes="y"),
-        ]
+        ],
+        sample=batch,
     )
     assert graph.order == ["a", "b", "c"]
     x = batch["inputs"]["image"]
@@ -124,7 +125,7 @@ def test_nodes_run_in_dependency_order_not_list_order(batch):
 
 
 def test_graph_is_a_normal_module(batch):
-    graph = ExecutionGraph([student()])
+    graph = ExecutionGraph([student()], sample=batch)
     assert isinstance(graph, nn.Module)
     assert len(list(graph.parameters())) == 1
     assert list(graph.state_dict()) == ["nodes.student.module.w"]
@@ -133,7 +134,7 @@ def test_graph_is_a_normal_module(batch):
     graph.train()
     assert graph.nodes["student"].module.training
 
-    clone = ExecutionGraph([student()])
+    clone = ExecutionGraph([student()], sample=batch)
     with torch.no_grad():
         graph.nodes["student"].module.w.fill_(3.0)
     clone.load_state_dict(graph.state_dict())
@@ -141,7 +142,7 @@ def test_graph_is_a_normal_module(batch):
 
 
 def test_gradients_reach_node_parameters(batch):
-    graph = ExecutionGraph([student()])
+    graph = ExecutionGraph([student()], sample=batch)
     graph(batch)["student.y"].sum().backward()
     assert graph.nodes["student"].module.w.grad is not None
 
@@ -149,7 +150,7 @@ def test_gradients_reach_node_parameters(batch):
 def test_deployable_model_is_the_nodes_module():
     chain = nn.Sequential(AddOne(), Scale())
     node = ModelNode("student", chain, reads="inputs.image", writes="y")
-    model = ExecutionGraph([node]).deployable_model("student")
+    model = ExecutionGraph([node], sample=None).deployable_model("student")
     assert model is chain  # the same object, so the same weights
     x = torch.zeros(3)
     torch.testing.assert_close(model(x), node(x)["student.y"])

@@ -322,7 +322,8 @@ sequenceDiagram
 | ---------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `lwfm/core/names.py`         | `resolve(name, batch, outputs)`, `resolve_all(names, batch, outputs)`           | Raises `UnknownNameError` (a `KeyError`) naming the missing value.                                                     |
 | `lwfm/core/graph.py`         | `ModelNode(name, module, reads, writes)`                                        | `reads`/`writes` take one name or a list. Node names can't contain `.` or be `inputs`, `targets` or `meta`.            |
-|                              | `ExecutionGraph(nodes)`; `graph(batch) -> {name: Tensor}`                       | Raises `GraphError` at build time for duplicate names, unknown reads and cycles.                                       |
+|                              | `ExecutionGraph(nodes, sample="default")`; `graph(batch) -> {name: Tensor}`     | Raises `GraphError` at build time for duplicate names, unknown reads and cycles, then runs the preflight shape check (below); output shapes in `graph.shapes`. |
+|                              | `graph.preflight(sample="default") -> {name: shape} \| None`                    | `sample`: a batch, `"default"` (zeros shaped by the `InputSpec` of the `InputAdapter` in the first node reading each input; `targets.class` as 0) or `None` (skip). Eval mode, no gradients, mode restored; every output must keep the batch size as its first dimension. |
 |                              | `graph.deployable_model(node) -> nn.Module`                                     | The named node's module itself, sharing weights. No default: the graph doesn't know which node is the student.         |
 | `lwfm/core/types.py`         | `InputSpec(channels, image_size, mean, std)`                                    | Frozen dataclass.                                                                                                      |
 | `lwfm/models/adapters.py`    | `InputAdapter(spec)`                                                            | Expects `[B, C, H, W]` in `[0, 1]`. Mean/std are buffers, not saved in `state_dict()`.                                 |
@@ -330,7 +331,6 @@ sequenceDiagram
 | `lwfm/evaluation/metrics.py` | `MetricBinding(name, metric, reads)`; `binding.update(batch, outputs)`          | `metric` is a torchmetrics `Metric`.                                                                                   |
 | `lwfm/evaluation/evaluator.py` | `Evaluator().evaluate(graph, loader, metrics, *, device, split="val", event_sink=None, step=None)` | Returns `EvaluationResult(metrics={name: float})`; see §3.6.                                                    |
 | `lwfm/core/batch.py`         | `to_device(batch, device)`                                                      | Moves tensors; keeps ids and paths.                                                                                    |
-
 **Design choices and their reasons**
 
 - **Values are passed by position, not by argument name.** You don't need to know that torchvision calls its argument `x`, and `CrossEntropyLoss(input, target)` and torchmetrics' `update(preds, target)` already take their values in a fixed order. TIAToolbox's IO configs also list a model's inputs in `forward` order, so a TIAToolbox wrapper (§9) lines up one-to-one.
@@ -340,7 +340,7 @@ sequenceDiagram
 - **Nodes live in `nn.ModuleDict`, not a plain dict.** Modules in a plain dict are invisible to `.parameters()`, `.to()` and `state_dict()`, so they would silently not train or not move to the GPU.
 - **Losses and metrics read names, not a shared context object.** Each binding states everything it reads, so a typo fails with the bad name in the message, and a loss can be tested on its own.
 - **Preprocessing is part of the model's `nn.Sequential`.** The deployable model then carries its own normalisation, so training and inference can't drift apart, and no separate adapter argument is needed.
-- **Validation happens at build time** where it can (valid and unique names, every read written by something, no cycles), so mistakes fail before a long run starts. Shapes are checked by one preflight forward pass on a sample batch.
+- **Validation happens at build time** where it can (valid and unique names, every read written by something, no cycles), so mistakes fail before a long run starts. Shapes are checked as the last step of building the graph, by one forward pass on a sample batch (implemented): a failing node keeps its PyTorch error type, with a note naming it and the shapes it read (`error.add_note`). The same note is added in ordinary runs, and losses and metrics add one naming themselves, so out-of-memory and similar errors can still be caught by type. Losses and metrics aren't part of the graph, so they aren't run at build time; their errors appear, named, at the first training step.
 - **The graph returns only node outputs, never a copy of the batch.** The batch is already available to every reader; copying it would hide where a value came from.
 
 ### 3.3 Using the building blocks

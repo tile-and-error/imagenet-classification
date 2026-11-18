@@ -39,7 +39,7 @@ LOADER = [batch([0, 1, 2]), batch([3])]
 
 def logits_graph(module=None):
     node = ModelNode("student", module or nn.Identity(), "inputs.logits", "logits")
-    return ExecutionGraph([node])
+    return ExecutionGraph([node], sample=LOADER[0])
 
 
 def top_k(k):
@@ -85,6 +85,7 @@ def test_metric_state_resets_between_runs():
 def test_runs_in_eval_and_inference_mode_and_changes_no_weights():
     probe = Probe()
     graph = logits_graph(probe)
+    probe.seen.clear()  # drop the build-time shape check
     before = {k: v.clone() for k, v in graph.state_dict().items()}
     first = Evaluator().evaluate(graph, LOADER, [top_k(1)], device=CPU)
     second = Evaluator().evaluate(graph, LOADER, [top_k(1)], device=CPU)

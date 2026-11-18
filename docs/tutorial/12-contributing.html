@@ -49,7 +49,7 @@ uv run --with pyright pyright lwfm      # type check</code></pre>
 
 <h3>What's done, what's next (Phase 1)</h3>
 <table>
-  <tr><td class="ok">done</td><td>Graph building blocks, losses, metric bindings and the evaluator (top-1/top-5), input adapter, events and sinks.</td></tr>
+  <tr><td class="ok">done</td><td>Graph building blocks and the preflight shape check, losses, metric bindings and the evaluator (top-1/top-5), input adapter, events and sinks.</td></tr>
   <tr><td class="todo">next</td><td>Data modules (fake data, ImageFolder, fixed splits), <code class="l">Trainer</code>, benchmarks, checkpoints, stages and recipe, the <code>python -m lwfm.run</code> command.</td></tr>
 </table>
 <p class="muted">Rule from the plan: no distillation or compression code until every Phase 1 test passes.</p>

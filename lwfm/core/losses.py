@@ -5,7 +5,7 @@ from typing import cast
 import torch
 from torch import Tensor, nn
 
-from lwfm.core.names import as_list, resolve_all
+from lwfm.core.names import as_list, describe, resolve_all
 from lwfm.core.types import Batch, Name
 
 
@@ -49,9 +49,16 @@ class LossComposer(nn.Module):
     def forward(
         self, batch: Batch, outputs: dict[Name, Tensor]
     ) -> tuple[Tensor, dict[str, Tensor]]:
-        terms = {
-            b.name: b.loss(*resolve_all(b.reads, batch, outputs)) for b in self.bindings
-        }
+        terms = {}
+        for b in self.bindings:
+            values = resolve_all(b.reads, batch, outputs)
+            try:
+                terms[b.name] = b.loss(*values)
+            except Exception as error:
+                error.add_note(
+                    f"in loss {b.name!r}, reading {describe(b.reads, values)}"
+                )
+                raise
         for name, term in terms.items():
             if term.ndim != 0 or not torch.isfinite(term):
                 raise ValueError(f"loss {name!r} is not a finite scalar: {term}")

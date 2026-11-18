@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from torch import Tensor
 from torchmetrics import Metric
 
-from lwfm.core.names import as_list, resolve_all
+from lwfm.core.names import as_list, describe, resolve_all
 from lwfm.core.types import Batch, Name
 
 
@@ -26,4 +26,11 @@ class MetricBinding:
         self.reads = as_list(self.reads)
 
     def update(self, batch: Batch, outputs: dict[Name, Tensor]) -> None:
-        self.metric.update(*resolve_all(self.reads, batch, outputs))
+        values = resolve_all(self.reads, batch, outputs)
+        try:
+            self.metric.update(*values)
+        except Exception as error:
+            error.add_note(
+                f"in metric {self.name!r}, reading {describe(self.reads, values)}"
+            )
+            raise
