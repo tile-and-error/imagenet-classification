@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>8. Training vs inference</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><a href="index.html">lwfm tutorial</a><span>8 / 12</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>8. Training vs inference</h1>
+
+<p class="lead">Training uses the whole framework. Inference uses only the trained model, pulled out as a plain <code class="t">nn.Module</code>.</p>
+<pre class="code"><code class="language-python">model = graph.deployable_model(&quot;student&quot;)        # lwfm: returns the node&#x27;s module itself
+model.eval()                                     # torch: switch layers to inference behaviour
+torch.save(model.state_dict(), &quot;weights.pt&quot;)     # torch: save only the weights
+
+with torch.inference_mode():                     # torch: no gradient bookkeeping
+    probs = model(torch.rand(1, 3, 120, 80)).softmax(dim=-1)  # any image size; resized inside</code></pre>
+<pre class="output">model is the same nn.Sequential(InputAdapter, resnet18) we built on slide 4; probs has shape [1, 10]</pre>
+<table>
+  <tr><th></th><th>Training</th><th>Inference</th></tr>
+  <tr><td>Input</td><td>batch dict with inputs <em>and</em> targets</td><td>a plain image tensor</td></tr>
+  <tr><td>Model</td><td>the whole <code class="l">ExecutionGraph</code> (student, later teachers)</td><td><code class="l">graph.deployable_model(&quot;student&quot;)</code>: one <code class="t">nn.Module</code></td></tr>
+  <tr><td>Uses names?</td><td>yes: nodes, losses, metrics are wired by name</td><td>no: just <code class="t">model(image)</code></td></tr>
+  <tr><td>Mode</td><td><code class="t">graph.train()</code>, gradients on</td><td><code class="t">model.eval()</code>, <code class="t">torch.inference_mode()</code></td></tr>
+</table>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">.train() / .eval()</code> — switch layers like dropout and batch-norm between training and inference behaviour.</li><li><code class="t">state_dict() / torch.save</code> — the model's weights as a dict, saved to a file.</li><li><code class="t">torch.inference_mode()</code> — runs faster and uses less memory by not tracking gradients.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">deployable_model(node)</code> — returns that node's module, sharing weights with the graph (no copy). You must name the node: the graph doesn't know which one is "the student".</li></ul></div></div>
+<div class="why"><strong>Why?</strong> The thing we measure and ship must be the student alone: no teachers, no losses, no framework. Because it's a plain nn.Module with its preprocessing inside, it can be benchmarked fairly, reloaded, or wrapped for TIAToolbox.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="07-evaluate.html">← 7. Evaluating a model</a><a rel="next" href="09-results.html">9. Recording results →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

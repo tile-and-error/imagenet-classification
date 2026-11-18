@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10. Where to extend</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><a href="index.html">lwfm tutorial</a><span>10 / 12</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>10. Where to extend</h1>
+
+<p class="lead">Each kind of change has one place to go. If you find yourself editing the graph or a loop to add a technique, stop: there is a better place.</p>
+<table>
+  <tr><th>To add…</th><th>Write…</th><th>Plug it in with…</th><th>Status</th></tr>
+  <tr><td>a model</td><td>any <code class="t">nn.Module</code></td><td><code class="l">ModelNode(name, module, reads, writes)</code></td><td class="ok">works now</td></tr>
+  <tr><td>a preprocessing step</td><td>any <code class="t">nn.Module</code></td><td>a step in the model's <code class="t">nn.Sequential</code></td><td class="ok">works now</td></tr>
+  <tr><td>a second model, projector, selector</td><td>any <code class="t">nn.Module</code></td><td>one more node in the <code class="l">ExecutionGraph</code></td><td class="ok">works now</td></tr>
+  <tr><td>a loss</td><td>a function or <code class="t">nn.Module</code> returning one number</td><td><code class="l">LossBinding</code> in the <code class="l">LossComposer</code></td><td class="ok">works now</td></tr>
+  <tr><td>a metric</td><td>a <code class="t">torchmetrics.Metric</code></td><td><code class="l">MetricBinding</code> in the <code class="l">Evaluator</code>'s list</td><td class="ok">works now</td></tr>
+  <tr><td>a results destination</td><td>a subclass of <code class="l">OutputSink</code></td><td>the <code class="l">OutputRouter</code>'s list of sinks</td><td class="ok">works now</td></tr>
+  <tr><td>a dataset</td><td>a subclass of <code class="l">DataModule</code></td><td>config</td><td class="todo">planned</td></tr>
+  <tr><td>a whole step of a run (prune, export)</td><td>a subclass of <code class="l">Stage</code></td><td>a <code class="l">Recipe</code></td><td class="todo">planned</td></tr>
+  <tr><td>a cost measurement</td><td>a subclass of <code class="l">Benchmark</code></td><td>the benchmark stage</td><td class="todo">planned</td></tr>
+  <tr><td>a change to a trained model (prune, quantise)</td><td>a <code class="l">ModelTransform</code></td><td>a transform stage</td><td class="todo">planned</td></tr>
+</table>
+<h3>Example: a new sink and a new loss</h3>
+<pre class="code"><code class="language-python">from lwfm.results.sinks import OutputSink        # lwfm interface (an abstract base class)
+
+class ListSink(OutputSink):                      # must define both methods,
+    def __init__(self):                          # or Python refuses to create it
+        self.events = []
+
+    def write(self, event):
+        self.events.append(event)
+
+    def close(self):
+        pass
+
+def logit_penalty(logits):                       # a plain function is a valid loss
+    return logits.pow(2).mean()                  # torch: returns one number
+
+loss_fn = LossComposer([
+    LossBinding(&quot;ce&quot;, nn.CrossEntropyLoss(), [&quot;student.logits&quot;, &quot;targets.class&quot;]),
+    LossBinding(&quot;penalty&quot;, logit_penalty, &quot;student.logits&quot;, weight=1e-3),
+])</code></pre>
+<pre class="mermaid">classDiagram
+    direction TB
+    class OutputSink {
+        &lt;&lt;lwfm ABC, done&gt;&gt;
+        +write(event)
+        +close()
+    }
+    class EventSink {
+        &lt;&lt;lwfm ABC, done&gt;&gt;
+        +emit(event)
+    }
+    class DataModule {
+        &lt;&lt;lwfm ABC, planned&gt;&gt;
+        +setup(stage)
+        +train_dataloader()
+        +val_dataloader()
+    }
+    class Stage {
+        &lt;&lt;lwfm ABC, planned&gt;&gt;
+        +execute(context) StageResult
+    }
+    class Benchmark {
+        &lt;&lt;lwfm ABC, planned&gt;&gt;
+        +measure(model, context) BenchmarkResult
+    }</pre>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">nn.Module</code> — the extension point for anything that computes: models, adapters, projectors, learnable losses.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">OutputSink, EventSink</code> — lwfm interfaces, written as abstract base classes (Python's abc.ABC). A subclass missing a method can't be created: the error lists what's missing.</li><li><code class="l">DataModule, Stage, Benchmark</code> — planned interfaces, same style.</li></ul></div></div>
+<div class="why"><strong>Why?</strong> Each technique acts at one point (data, model, forward pass, loss, a whole step), so each gets its own small interface instead of one giant one. That way a technique is added without touching the trainer, and the baseline keeps working.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="09-results.html">← 9. Recording results</a><a rel="next" href="11-design.html">11. Design decisions →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

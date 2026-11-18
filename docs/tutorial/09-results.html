@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>9. Recording results</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><a href="index.html">lwfm tutorial</a><span>9 / 12</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>9. Recording results</h1>
+
+<p class="lead">Training code <strong>emits events</strong>. <strong>Sinks</strong> decide where they go. The training code never knows about files.</p>
+<pre class="code"><code class="language-python">from lwfm.results.events import RunEvent                        # lwfm
+from lwfm.results.router import OutputRouter                    # lwfm
+from lwfm.results.sinks import ConsoleSink, LocalFileSink       # lwfm
+
+with OutputRouter([LocalFileSink(&quot;runs/demo&quot;), ConsoleSink()]) as router:   # lwfm
+    for step in range(3):
+        total, terms = loss_fn(batch, graph(batch))
+        optimizer.zero_grad()
+        total.backward()
+        optimizer.step()
+        router.emit(RunEvent(&quot;scalar&quot;, &quot;train/loss/total&quot;, total.detach(),  # torch tensor is fine;
+                             stage=&quot;fit&quot;, step=step))                       # stored as a number</code></pre>
+<pre class="output">[fit step 0] train/loss/total = 0.000599
+[fit step 1] train/loss/total = 0.0005757
+[fit step 2] train/loss/total = 0.0005544
+status = completed
+
+runs/demo/  events.jsonl  manifest.json  status.json  summary.json</pre>
+<pre class="mermaid">classDiagram
+    direction LR
+    class EventSink {
+        &lt;&lt;lwfm ABC&gt;&gt;
+        +emit(event)
+    }
+    class OutputSink {
+        &lt;&lt;lwfm ABC&gt;&gt;
+        +write(event)
+        +close()
+    }
+    class OutputRouter {
+        &lt;&lt;lwfm&gt;&gt;
+        +emit(event)
+        +close()
+    }
+    class LocalFileSink {
+        &lt;&lt;lwfm&gt;&gt;
+    }
+    class ConsoleSink {
+        &lt;&lt;lwfm&gt;&gt;
+    }
+    class RunEvent {
+        &lt;&lt;lwfm dataclass&gt;&gt;
+        +kind
+        +name
+        +value
+        +stage
+        +step
+    }
+    EventSink &lt;|-- OutputRouter
+    OutputSink &lt;|-- LocalFileSink
+    OutputSink &lt;|-- ConsoleSink
+    OutputRouter o-- &quot;1..*&quot; OutputSink : sends to
+    OutputRouter ..&gt; RunEvent : emits</pre>
+<h3>Saving weights: a file, plus an event that points to it</h3>
+<pre class="code"><code class="language-python">from lwfm.core.types import ArtifactRef                         # lwfm
+
+torch.save(model.state_dict(), &quot;runs/demo/student.pt&quot;)         # torch: the weights, in their own file
+router.emit(RunEvent(&quot;artifact&quot;, &quot;fit/checkpoint&quot;,              # lwfm: the log records where it is
+                     ArtifactRef(&quot;torch_checkpoint&quot;, &quot;student.pt&quot;, producer_stage=&quot;fit&quot;)))</code></pre>
+<p class="muted">Sinks never receive tensors: a one-number tensor becomes a plain number, anything bigger is refused. Large data goes to its own file; the event only says where it is.</p>
+<table>
+  <tr><th>File</th><th>Written</th><th>Holds</th></tr>
+  <tr><td><code>manifest.json</code></td><td>at the start</td><td>versions, machine, git revision, your settings</td></tr>
+  <tr><td><code>status.json</code></td><td>start, then at the end</td><td>running → completed / failed (with traceback) / interrupted</td></tr>
+  <tr><td><code>events.jsonl</code></td><td>every event, at once</td><td>one line per event, so a crashed run keeps its data</td></tr>
+  <tr><td><code>summary.json</code></td><td>at the end</td><td>the last value of every scalar</td></tr>
+</table>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">total.detach()</code> — a tensor with no gradient attached. A one-number tensor is stored as a plain number; bigger tensors are refused (save a file instead).</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">RunEvent(kind, name, value, stage, step)</code> — kind is scalar, table, artifact, status or message.</li><li><code class="l">OutputRouter(sinks)</code> — sends each event to every sink. Used with <code>with</code>, it records the final status even if the run crashes.</li><li><code class="l">EventSink / OutputSink</code> — the two interfaces. Code that produces results only depends on EventSink.</li></ul></div></div>
+<div class="why"><strong>Why?</strong> Sinks sit outside the computation, and <strong>nothing reads back from them</strong>. Remove every sink and training computes exactly the same thing. Adding a new destination (CSV, MLflow) is a new sink, with no change to training code.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="08-train-vs-infer.html">← 8. Training vs inference</a><a rel="next" href="10-interfaces.html">10. Where to extend →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

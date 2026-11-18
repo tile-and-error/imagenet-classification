@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3. Batches and names</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><a href="index.html">lwfm tutorial</a><span>3 / 12</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>3. Batches and names</h1>
+
+<p class="lead">A batch is a <strong>plain dict</strong> with three groups. Every value in it, and every model output, has a <strong>name</strong>.</p>
+<pre class="code"><code class="language-python">import torch
+
+batch = {                                              # a plain Python dict
+    &quot;inputs&quot;: {&quot;image&quot;: torch.rand(8, 3, 96, 96)},     # torch: float tensor [B, C, H, W] in [0, 1]
+    &quot;targets&quot;: {&quot;class&quot;: torch.randint(0, 10, (8,))},  # torch: int64 labels [B]
+    &quot;meta&quot;: {&quot;sample_id&quot;: [f&quot;s{i}&quot; for i in range(8)]},  # anything that isn&#x27;t a tensor
+}
+
+from lwfm.core.names import resolve                    # lwfm: look a value up by name
+
+resolve(&quot;inputs.image&quot;, batch, {})    # -&gt; batch[&quot;inputs&quot;][&quot;image&quot;]
+resolve(&quot;targets.class&quot;, batch, {})   # -&gt; batch[&quot;targets&quot;][&quot;class&quot;]</code></pre>
+<h3>The two kinds of name</h3>
+<table>
+  <tr><th>Name</th><th>Means</th><th>Example</th></tr>
+  <tr><td><code>&lt;group&gt;.&lt;key&gt;</code></td><td>A value in the batch (group = inputs, targets or meta)</td><td><code>inputs.image</code></td></tr>
+  <tr><td><code>&lt;node&gt;.&lt;output&gt;</code></td><td>An output of a model node</td><td><code>student.logits</code></td></tr>
+</table>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">torch.Tensor</code> — the numbers. Shapes are written [B, C, H, W]: batch, channels, height, width.</li><li><code class="t">DataLoader</code> — can batch dicts like this one with no extra code.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">resolve(name, batch, outputs)</code> — finds a value by name; a typo raises <code class="l">UnknownNameError</code> that says which name was wrong.</li><li><code class="l">Name</code> — just a string, like "student.logits".</li></ul></div></div>
+<div class="why"><strong>Why?</strong> A dict needs no special support: PyTorch's DataLoader, saving and device tools already handle it. String names make the wiring readable in one place, and they can be written in a config file or a log.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="02-pipeline.html">← 2. Think of a pipeline as objects</a><a rel="next" href="04-model-node.html">4. ModelNode: wrapping a model →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

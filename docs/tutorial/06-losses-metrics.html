@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6. Losses and metrics</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><a href="index.html">lwfm tutorial</a><span>6 / 12</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>6. Losses and metrics</h1>
+
+<p class="lead">A <strong>binding</strong> pairs a normal loss or metric with the names of the values it reads.</p>
+<pre class="code"><code class="language-python">import torch
+from lwfm.core.losses import LossBinding, LossComposer   # lwfm
+
+loss_fn = LossComposer([                                  # lwfm: adds up all its losses
+    LossBinding(&quot;ce&quot;, nn.CrossEntropyLoss(),              # torch: the loss, unchanged
+                [&quot;student.logits&quot;, &quot;targets.class&quot;]),     # lwfm: CrossEntropyLoss(input, target)
+])
+optimizer = torch.optim.SGD(graph.parameters(), lr=0.1)   # torch
+
+graph.train()                                     # torch: training mode
+for step in range(20):
+    total, terms = loss_fn(batch, graph(batch))   # lwfm: total, and each term for logging
+    optimizer.zero_grad()                         # torch
+    total.backward()                              # torch: compute gradients
+    optimizer.step()                              # torch: update weights</code></pre>
+<pre class="output">terms == {&#x27;ce&#x27;: tensor(0.0006)}    # one batch, learned by heart: loss falls towards 0</pre>
+<pre class="code"><code class="language-python">from torchmetrics.classification import MulticlassAccuracy   # torchmetrics
+from lwfm.evaluation.metrics import MetricBinding            # lwfm
+
+top1 = MetricBinding(
+    &quot;top1&quot;,                                                  # lwfm: the result&#x27;s name
+    MulticlassAccuracy(num_classes=10, average=&quot;micro&quot;),     # torchmetrics: unchanged
+    [&quot;student.logits&quot;, &quot;targets.class&quot;],                     # lwfm: update(preds, target)
+)
+top1.update(batch, graph(batch))   # lwfm: looks the values up, calls metric.update(preds, target)
+top1.metric.compute()              # torchmetrics: accuracy over every sample seen so far</code></pre>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">nn.CrossEntropyLoss</code> — a standard loss: (input, target) → one number.</li><li><code class="t">total.backward()</code> — PyTorch's autograd works out every weight's gradient.</li><li><code class="t">torch.optim.SGD</code> — updates the weights from those gradients.</li><li><code class="t">torchmetrics.Metric</code> — a metric that keeps running totals: reset(), update(preds, target) per batch, compute() at the end. average="micro" counts every sample equally.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">LossBinding(name, loss, reads, weight=1.0)</code> — any loss: a torch loss, your own nn.Module, or a plain function.</li><li><code class="l">LossComposer(bindings)</code> — returns total = Σ weight × loss, plus each loss detached (no gradient) for logging. A NaN or non-scalar loss raises an error naming it.</li><li><code class="l">MetricBinding(name, metric, reads)</code> — update() looks values up by name and passes them in order. Resetting and computing is the Evaluator's job (next slide).</li></ul></div></div>
+<div class="why"><strong>Why?</strong> Adding a distillation loss later is one more LossBinding that reads "teacher.logits". No loss reads a hidden shared object, so each one can be tested on its own, and a wrong name fails with that name in the message.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="05-graph.html">← 5. ExecutionGraph: connecting models</a><a rel="next" href="07-evaluate.html">7. Evaluating a model →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

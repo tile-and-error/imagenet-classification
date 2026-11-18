@@ -1,337 +1,260 @@
-# Simplify the graph API: positional `reads`/`writes`, plain `nn.Sequential` chains
+# Add output sinks and the evaluator (PLAN.md P1.7, P1.5)
 
-Reworks the building blocks from the previous commit so a node is easier to read and write:
+Two Phase 1 items. **P1.5:** `Evaluator` scores a graph with torchmetrics through `MetricBinding`s (micro top-1/top-5). **P1.7:** the results layer. The evaluator is described first; the sinks section follows.
+
+## Evaluator (P1.5)
 
 ```python
-# Before
-ModelNode(
-    name="student",
-    module=resnet18(num_classes=10),
-    inputs={"x": "batch.inputs.image"},
-    outputs={"logits": "student.logits"},
-    input_adapter=InputAdapter(InputSpec(image_size=(64, 64))),
-)
-
-# After
-ModelNode(
-    "student",
-    nn.Sequential(
-        InputAdapter(InputSpec(image_size=(64, 64))), resnet18(num_classes=10)
-    ),
-    reads="inputs.image",
-    writes="logits",  # stored as "student.logits"
-)
+metrics = [
+    MetricBinding(
+        f"top{k}",
+        MulticlassAccuracy(num_classes=10, top_k=k, average="micro"),
+        ["student.logits", "targets.class"],
+    )
+    for k in (1, 5)
+]
+result = Evaluator().evaluate(graph, val_loader, metrics, device=torch.device("cpu"))
+result.metrics  # {"top1": ..., "top5": ...}
 ```
 
-**What changed and why**
+| File | What | Why |
+| --- | --- | --- |
+| `lwfm/evaluation/evaluator.py` | `Evaluator`, `EvaluationResult` | Reset, eval mode, `inference_mode`, update per batch, compute once (§3.6). |
+| `lwfm/core/batch.py` | `to_device(batch, device)` | Moves tensors, keeps ids; the trainer will reuse it. |
+| `lwfm/evaluation/metrics.py` | `metric: torchmetrics.Metric` | `torchmetrics` is now a dependency (`pyproject.toml`, `uv.lock`). |
+| `tests/unit/test_evaluator.py` | 11 tests | Below. |
+| `examples/building_blocks.ipynb` | Section 7, "Evaluate top-1 and top-5" | Runnable example. |
+| `PLAN.md` | §3.3, §3.6, API table, P1.5 marked done | The plan stays the source of truth. |
+| `tutorial/` | New slide 7 "Evaluating a model"; later slides renumbered | Also adds: a shared node runs once, weights saved as file + artifact event. |
 
-| Change | Why |
-| --- | --- |
-| "Port" is now "name"; `ports.py` → `names.py`, `PortError` → `UnknownNameError`, `Port` → `Name`. | "Port" was jargon for "the name of a value". |
-| Batch values are `inputs.image`, `targets.class`, `meta.sample_id` (no `batch.` prefix). | The prefix was in nearly every name and added nothing. |
-| `ModelNode(name, module, reads, writes)`: `reads` are passed to `forward` **by position**. | You no longer need to know that torchvision calls its argument `x`. |
-| `writes` are short names; the node stores them as `<node>.<write>`. | The node name is typed once, and two nodes can't write the same name. |
-| Tuple returns are supported (one name per item, in order); a wrong count raises `GraphError`. | Previously only Tensor and dict returns worked. |
-| `input_adapter` is removed; build chains with `nn.Sequential(InputAdapter(spec), model)`. | Straight chains are plain torch. The graph is only for branches and merges, and the adapter now runs only where it's placed, not on every input. |
-| `deployable_model(node)` returns the node's module and takes **no default**. | The module already is the full chain. The graph doesn't know which node is "the student", so it shouldn't guess. |
-| `LossBinding(name, loss, reads, weight)` and `MetricBinding(name, metric, reads)` pass values by position. | `CrossEntropyLoss(input, target)` and torchmetrics' `update(preds, target)` already take a fixed order. |
-| Node names may not contain `.` or be `inputs`, `targets`, `meta`; a node may not write the same name twice. | Otherwise names would be ambiguous. |
-| Type fixes: `cast` for `ModuleDict` lookups and the loss total; declared buffer types on `InputAdapter`; `resolve_all` takes any sequence. | `pyright lwfm` now reports 0 errors. |
+**Design choices**
 
-**Files**
+- **Computed once over all batches**, so accuracy is per sample (micro across batches), independent of batch size. The micro/macro choice belongs to the metric object.
+- **The graph's train/eval mode is restored**, also on error, so the trainer can call the evaluator for validation mid-run.
+- **`split` only names events** (`eval/<split>/<name>`); `"val"` is the default since validation is the common call.
+- **Fails clearly** on an empty loader, no metrics, duplicate names, or a metric that computes more than one number.
+- **The loader is any `Iterable[Batch]`**: a `DataLoader`, or a list of batches in tests and notebooks.
 
-- `lwfm/core/names.py` (was `ports.py`), `lwfm/core/graph.py`, `lwfm/core/losses.py`, `lwfm/evaluation/metrics.py`, `lwfm/core/types.py`, `lwfm/models/adapters.py`.
-- `tests/unit/test_names.py` (was `test_ports.py`), `test_graph.py`, `test_bindings.py`: 38 tests.
-- `examples/building_blocks.ipynb`: same examples on the new API; same outputs as before.
-- `PLAN.md`: §3.1–3.4 rewritten for the new API; §3.2's copied code is replaced by an API table pointing at the real files; §6.2 YAML now names the node and what it reads and writes.
+```mermaid
+sequenceDiagram
+    participant E as Evaluator
+    participant M as MetricBinding
+    participant G as ExecutionGraph
+    participant S as EventSink
+    E->>M: metric.reset(), metric.to(device)
+    E->>G: graph.eval()
+    loop every batch, under torch.inference_mode()
+        E->>G: graph(to_device(batch))
+        E->>M: update(batch, outputs)
+    end
+    E->>G: restore previous mode
+    E->>M: metric.compute()
+    E-->>S: emit eval/<split>/<name> (if a sink is given)
+```
+
+### `tests/unit/test_evaluator.py`
+
+The fixture is a hand-worked example: an identity node passes fixed logits through, $K=6$, true-class ranks $1,1,6,2$, so top-1 $=2/4$, top-5 $=3/4$. Batches have sizes 3 and 1, so a per-batch average would give top-1 $=1/3$.
+
+| Test | What it checks | Why it matters |
+| --- | --- | --- |
+| `test_micro_top1_top5_match_hand_worked_example` | `{"top1": 0.5, "top5": 0.75}`. | Matches a hand computation, globally over unequal batches (§6.5). |
+| `test_metric_state_resets_between_runs` | Reusing the same bindings on a second loader gives that loader's score (0.0), not an accumulation. | Metric state resets between runs (§6.5). |
+| `test_runs_in_eval_and_inference_mode_and_changes_no_weights` | A probe module sees `training=False` and inference mode; the `state_dict` is bit-identical afterwards; two runs give equal results; the graph is back in train mode. | The evaluator changes no weights and is repeatable (§6.5). |
+| `test_eval_mode_is_kept_if_graph_was_in_eval` | A graph in eval mode stays in eval mode. | It restores, not forces, the mode. |
+| `test_mode_is_restored_when_a_metric_fails` | A binding reading a missing name raises `KeyError` naming it, and the graph is back in train mode. | An error can't leave training in eval mode. |
+| `test_values_are_emitted_as_eval_split_name` | With `split="test"`, `step=7`: scalars `eval/test/top1` and `eval/test/top5` at step 7. | Event names follow §3.6. |
+| `test_bad_inputs_fail_clearly` (×4) | Empty loader, no metrics, duplicate names, `average="none"` (shape `(6,)`) each raise with the reason. | Misuse fails clearly (§6.5). |
+| `test_to_device_moves_tensors_and_keeps_other_values` | Tensors move to the `meta` device; `sample_id` strings are unchanged. | Ids and paths survive a device move. |
+
+---
+
+## Output sinks (P1.7)
+
+Adds the results layer. Code **emits** typed events; **sinks** decide where they go. The trainer, evaluator and benchmarks (later steps) therefore never know about files. Nothing emits events yet, so the tests and a new notebook section emit them directly.
+
+```python
+from lwfm.results.events import RunEvent
+from lwfm.results.router import OutputRouter
+from lwfm.results.sinks import ConsoleSink, LocalFileSink
+
+with OutputRouter([LocalFileSink("runs/demo"), ConsoleSink()]) as router:
+    for step in range(3):
+        total, terms = loss_fn(batch, graph(batch))
+        ...
+        router.emit(
+            RunEvent(
+                "scalar", "train/loss/total", total.detach(), stage="fit", step=step
+            )
+        )
+# runs/demo: manifest.json, status.json (completed), events.jsonl, summary.json
+```
+
+**Changes**
+
+| File | What | Why |
+| --- | --- | --- |
+| `lwfm/results/events.py` | `RunEvent`, `EventSink` (ABC) | One record type for everything a run reports; `EventSink` is what computing code will accept. |
+| `lwfm/results/sinks.py` | `OutputSink` (ABC), `LocalFileSink`, `ConsoleSink`, `SinkError` | The two Phase 1 destinations; `SinkError` makes a storage failure loud. |
+| `lwfm/results/router.py` | `OutputRouter` | Sends each event to every sink; as a context manager it records the final run status. |
+| `lwfm/results/manifest.py` | `environment()` | Versions, machine and git state for `manifest.json` (§6.4). |
+| `lwfm/core/types.py` | `ArtifactRef` | The value of an `artifact` event (§3.7). |
+| `tests/unit/test_{events,sinks,router}.py` | 27 tests | One per behaviour below. |
+| `examples/building_blocks.ipynb` | Section 6, "Record a run" | The notebook's training loop writes a run directory. |
+| `PLAN.md` | §3.9 rewritten as the implemented API; §3.6 and §6.1 point to it | The plan stays the source of truth. |
+
+**Design choices**
+
+- **Tensors are kept out of the log.** A one-element tensor scalar (as `LossComposer` returns) becomes a Python number; any other tensor raises `TypeError` asking for a file plus an `artifact` event (§3.9).
+- **The status can't be left at `running` by a crash.** `with OutputRouter(...)` records `completed`, `interrupted` (`KeyboardInterrupt`) or `failed` with the traceback, then closes the sinks, even when the run raised.
+- **Partial runs keep their data.** Each event is flushed to `events.jsonl` as it is emitted.
+- **The manifest is written at the start, not the end** (a change from the earlier §3.9 text), so a crashed run still records what it was.
+- **No half-written files.** `manifest.json`, `status.json` and `summary.json` go to a temporary file and are renamed into place.
+- **Failures are loud.** A non-JSON value fails before anything is written; a failing sink raises `SinkError` naming the sink and the event; a directory that already holds a run is refused.
+- **Git is read from the code's directory**, not the working directory, so the recorded revision is the code that ran. Outside a checkout the fields are `None` rather than an error.
+- **`ConsoleSink` writes to a stream, not `logging`**: it is the console destination, so logging configuration shouldn't hide it.
 
 ---
 
 ## Diagrams
 
-### Classes and modules
-
-```mermaid
-classDiagram
-    direction TB
-
-    namespace torch {
-        class Module {
-            <<torch.nn>>
-            +parameters()
-            +state_dict()
-            +train(mode)
-            +to(device)
-        }
-        class Sequential {
-            <<torch.nn>>
-            +forward(x)
-        }
-    }
-
-    namespace lwfm_core_types {
-        class InputSpec {
-            <<dataclass, frozen>>
-            +int channels
-            +tuple image_size
-            +tuple mean
-            +tuple std
-        }
-    }
-
-    namespace lwfm_core_names {
-        class names {
-            <<functions>>
-            +resolve(name, batch, outputs) Any
-            +resolve_all(names, batch, outputs) list
-            +as_list(names) list
-        }
-        class UnknownNameError {
-            <<KeyError>>
-        }
-    }
-
-    namespace lwfm_core_graph {
-        class ModelNode {
-            +str name
-            +Module module
-            +list reads
-            +list writes
-            +list outputs
-            +forward(*values) dict
-        }
-        class ExecutionGraph {
-            +list order
-            +ModuleDict nodes
-            +forward(batch) dict
-            +deployable_model(node) Module
-        }
-        class graph {
-            <<functions>>
-            +run_order(nodes) list
-        }
-        class GraphError {
-            <<ValueError>>
-        }
-    }
-
-    namespace lwfm_models_adapters {
-        class InputAdapter {
-            +InputSpec spec
-            +Tensor mean
-            +Tensor std
-            +forward(image) Tensor
-        }
-    }
-
-    namespace lwfm_core_losses {
-        class LossBinding {
-            <<dataclass>>
-            +str name
-            +Callable loss
-            +list reads
-            +float weight
-        }
-        class LossComposer {
-            +list bindings
-            +ModuleList losses
-            +forward(batch, outputs) tuple
-        }
-    }
-
-    namespace lwfm_evaluation_metrics {
-        class MetricBinding {
-            <<dataclass>>
-            +str name
-            +Metric metric
-            +list reads
-            +update(batch, outputs)
-        }
-    }
-
-    Module <|-- Sequential
-    Module <|-- ModelNode
-    Module <|-- ExecutionGraph
-    Module <|-- InputAdapter
-    Module <|-- LossComposer
-
-    ExecutionGraph *-- "1..*" ModelNode : nodes
-    ModelNode *-- "1" Module : module, unchanged
-    Sequential o-- InputAdapter : e.g. first step
-    InputAdapter --> InputSpec : spec
-    LossComposer *-- "1..*" LossBinding : bindings
-
-    ExecutionGraph ..> graph : order = run_order(nodes)
-    ModelNode ..> GraphError : raises
-    graph ..> GraphError : raises
-    ExecutionGraph ..> names : resolve_all
-    LossComposer ..> names : resolve_all
-    MetricBinding ..> names : resolve_all
-    names ..> UnknownNameError : raises
-```
-
-Hollow-headed arrows are inheritance; filled diamonds mean "holds"; dotted arrows mean "calls" or "raises". The only base class is `nn.Module`. `names` and `graph` stand for module-level functions, not classes. A node's module is any `nn.Module`; for a model with preprocessing it is an `nn.Sequential` whose first step is an `InputAdapter`. All reading of values goes through `resolve_all`, so the graph, the losses and the metrics agree on what a name means.
-
-### What one forward pass does
-
-```mermaid
-sequenceDiagram
-    participant C as caller
-    participant G as ExecutionGraph
-    participant R as names.resolve_all
-    participant N as ModelNode
-    participant M as module (e.g. Sequential)
-    C->>G: graph(batch)
-    loop for name in graph.order
-        G->>R: resolve_all(node.reads, batch, outputs)
-        R-->>G: [image]
-        G->>N: node(image)
-        N->>M: module(image)
-        M-->>N: Tensor, tuple or dict
-        N-->>G: {"student.logits": tensor}
-        G->>G: outputs |= node result
-    end
-    G-->>C: outputs (flat dict of names)
-```
-
-### What scoring the outputs does
-
-```mermaid
-sequenceDiagram
-    participant C as caller
-    participant L as LossComposer
-    participant B as LossBinding
-    participant R as names.resolve_all
-    participant MB as MetricBinding
-    participant MT as metric
-    C->>L: composer(batch, outputs)
-    loop each LossBinding
-        L->>R: resolve_all(binding.reads, batch, outputs)
-        R-->>L: [logits, labels]
-        L->>B: binding.loss(logits, labels)
-        B-->>L: scalar
-    end
-    L->>L: check finite scalars, total = sum(weight * term)
-    L-->>C: total, {name: term.detach()}
-    C->>MB: binding.update(batch, outputs)
-    MB->>R: resolve_all(binding.reads, batch, outputs)
-    MB->>MT: metric.update(logits, labels)
-```
-
-### Test doubles
+### Classes
 
 ```mermaid
 classDiagram
     direction LR
-    class Module {
-        <<torch.nn>>
+    class EventSink {
+        <<ABC>>
+        +emit(event)
     }
-    class Scale {
-        +Parameter w
-        +forward(x) Tensor
+    class OutputSink {
+        <<ABC>>
+        +write(event)
+        +close()
     }
-    class TwoHeads {
-        +forward(pixels) dict
+    class OutputRouter {
+        +list sinks
+        +emit(event)
+        +close()
     }
-    class Pair {
-        +forward(x) tuple
+    class LocalFileSink {
+        +Path run_dir
+        +write(event)
+        +close()
     }
-    class Sub {
-        +forward(a, b) Tensor
+    class ConsoleSink {
+        +TextIO stream
+        +write(event)
+        +close()
     }
-    class AddOne {
-        +forward(image) Tensor
+    class RunEvent {
+        <<dataclass>>
+        +kind
+        +str name
+        +value
+        +stage
+        +step
+        +str timestamp_utc
     }
-    class Recorder {
-        +list calls
-        +update(preds, target)
+    class ArtifactRef {
+        <<dataclass, frozen>>
+        +str kind
+        +str path
+        +str producer_stage
+        +sha256
     }
-    Module <|-- Scale
-    Module <|-- TwoHeads
-    Module <|-- Pair
-    Module <|-- Sub
-    Module <|-- AddOne
-    ModelNode o-- Scale : module
-    ModelNode o-- TwoHeads : module
-    ModelNode o-- Pair : module
-    ModelNode o-- Sub : module
-    Sequential o-- AddOne : first step
-    Sequential o-- Scale : second step
-    MetricBinding o-- Recorder : metric
+    class SinkError {
+        <<RuntimeError>>
+    }
+    class environment {
+        <<function>>
+    }
+    EventSink <|-- OutputRouter
+    OutputSink <|-- LocalFileSink
+    OutputSink <|-- ConsoleSink
+    OutputRouter o-- "1..*" OutputSink : sinks
+    OutputRouter ..> RunEvent : emits
+    OutputRouter ..> SinkError : raises
+    RunEvent ..> ArtifactRef : value of artifact events
+    LocalFileSink ..> environment : manifest.json
 ```
 
-| Double     | Why it is shaped this way                                                                                      |
-| ---------- | -------------------------------------------------------------------------------------------------------------- |
-| `Scale`    | One parameter (`w = 2`) and a Tensor return: the smallest trainable node; outputs are easy to predict ($2x$). |
-| `TwoHeads` | Argument named `pixels`, not `x`, and a dict return with an extra field: tests that only listed fields are kept. |
-| `Pair`     | Returns a tuple `(x + 1, x - 1)`: tests tuple items are named in order, and a wrong count fails.              |
-| `Sub`      | Two inputs, `a - b`, which is **not** symmetric: a swapped argument order would give the wrong sign.           |
-| `AddOne`   | Visible and parameter-free: as the first step of `nn.Sequential(AddOne(), Scale())` it shows order ($2(x+1)$). |
-| `Recorder` | Plain class with `update(preds, target)`: stands in for a torchmetrics metric and records what it received.   |
+Code that produces results (the future `Trainer`, `Evaluator`, stages) depends only on `EventSink`. The router is the one `EventSink`, and it fans out to any number of `OutputSink`s. Adding a destination (CSV, MLflow) is a new `OutputSink` subclass; nothing else changes.
 
-### The dependency-order test graph
+### Run status
 
 ```mermaid
-flowchart LR
-    X["inputs.image"] --> A["a: Scale<br/>a.y = 2x"]
-    A -- "a.y" --> B["b: Scale<br/>b.y = 4x"]
-    B -- "b.y (1st)" --> C["c: Sub<br/>c.y = 4x − 2x"]
-    A -- "a.y (2nd)" --> C
+stateDiagram-v2
+    [*] --> running : LocalFileSink created
+    running --> completed : with-block exits normally
+    running --> interrupted : KeyboardInterrupt
+    running --> failed : any other exception (traceback saved)
+    completed --> [*] : sinks closed
+    interrupted --> [*] : sinks closed, exception re-raised
+    failed --> [*] : sinks closed, exception re-raised
 ```
 
-The nodes are passed as `[c, b, a]`; the graph must still run `a, b, c`, and pass `b.y` then `a.y` to `c`.
+### What lands where in the run directory
+
+```mermaid
+sequenceDiagram
+    participant C as training code
+    participant R as OutputRouter
+    participant L as LocalFileSink
+    participant K as ConsoleSink
+    Note over L: created: manifest.json, status.json = running
+    C->>R: emit(scalar train/loss/ce, step 0)
+    R->>L: write → append line to events.jsonl, flush
+    R->>K: write → "[fit step 0] train/loss/ce = 0.0012"
+    Note over C,R: ... more events ...
+    C->>R: leave the with-block
+    R->>L: write(status completed) → status.json rewritten
+    R->>K: write → "status = completed"
+    R->>L: close → summary.json (last value per scalar)
+    R->>K: close → flush
+```
 
 ---
 
 ## Tests
 
-All 38 tests run on CPU in about a second and use no real models or data.
+All 76 tests (38 existing, 27 for sinks, 11 for the evaluator) run on CPU in under two seconds. The new tests write only to pytest's `tmp_path`.
 
-### `tests/unit/test_names.py` — reading values by name
+### `tests/unit/test_events.py` — the event record
 
-| Test                                          | What it checks                                                                                                                                                         | Why it matters                                                                    |
-| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `test_resolves_batch_values`                  | `inputs.image` and `targets.class` return the very tensors in the batch (same object, no copy); `meta.sample_id` returns a non-tensor list.                            | Names reach any batch value, including metadata, without copying.                 |
-| `test_resolves_node_outputs`                  | `student.logits` returns the tensor from the outputs dict.                                                                                                             | Node outputs and batch values are read the same way.                              |
-| `test_unknown_name_is_in_the_error` (×4)      | `inputs.imgae` (typo in a key), `studnet.logits` (typo in a node name), bare `inputs`, and the old-style `batch.inputs.image` all raise `UnknownNameError` naming the value. | A wiring mistake says exactly which name is wrong; old names fail loudly.       |
-| `test_resolve_all_keeps_order`                | `["student.logits", "targets.class"]` returns the logits then the labels.                                                                                             | Values are passed by position, so order is the contract.                          |
-| `test_as_list_accepts_one_name_or_many`       | A single string becomes a one-item list; a tuple becomes a list.                                                                                                       | `reads="inputs.image"` and `reads=["a.y", "b.y"]` both work.                      |
+| Test | What it checks | Why it matters |
+| --- | --- | --- |
+| `test_timestamp_is_set_in_utc` | A new event's `timestamp_utc` parses as ISO-8601 with a zero UTC offset. | Events from different machines and time zones line up. |
+| `test_one_element_tensor_scalar_becomes_a_number` | `torch.tensor(0.25)` is stored as the Python `float` `0.25`. | Losses can be logged straight from `LossComposer` without `.item()` everywhere. |
+| `test_other_tensors_are_refused` (×2) | A 2-element scalar tensor, and a tensor in a `table` event, raise `TypeError` naming the event and pointing to artifact events. | Tensors never end up in the JSONL log (§3.9). |
+| `test_unknown_kind_fails` | `kind="metric"` raises `ValueError`. | A typo in the kind can't create events no sink understands. |
+| `test_unknown_status_fails` | A `status` event with value `"done"` raises `ValueError`. | Only the four statuses in §6.4 can be recorded. |
+| `test_event_sink_is_abstract` | `EventSink()` raises `TypeError`. | It is an interface (§3.5); only implementations can be created. |
 
-### `tests/unit/test_graph.py` — nodes and the graph
+### `tests/unit/test_sinks.py` — local files and console
 
-| Test                                                        | What it checks                                                                                                                                                                  | Why it matters                                                                                        |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `test_node_writes_tensor_under_its_own_name`                | `reads="inputs.image"` becomes `["inputs.image"]`; `writes="y"` on node `student` gives output `student.y` with value $2x$.                                                     | Most models return one tensor; the node names it without the user repeating the node name.          |
-| `test_node_keeps_only_listed_dict_fields`                   | Of `TwoHeads`' three dict fields, only `logits` and `features` are returned, as `student.logits` and `student.features`.                                                      | Unwanted fields don't leak into the graph outputs.                                                    |
-| `test_node_names_tuple_items_in_order`                      | `Pair` returns `(x + 1, x - 1)`; with `writes=["up", "down"]`, `p.up` is $1$ and `p.down` is $-1$ for $x = 0$.                                                                 | Tuple-returning models work with no wrapper.                                                          |
-| `test_node_passes_reads_by_position`                        | With `reads=["a.y", "b.y"]`, `Sub` gets $a = 5$, $b = 3$ and returns $2$.                                                                                                      | Argument order follows `reads`, whatever the argument names are.                                      |
-| `test_node_runs_a_sequential_chain_in_order`                | `nn.Sequential(AddOne(), Scale())` as the module turns $0$ into $2$, i.e. $2(0+1)$.                                                                                            | Straight chains (preprocessing then model) are plain torch inside one node.                          |
-| `test_wrong_number_of_outputs_fails`                        | `Pair` returns two values but the node writes one name: `GraphError` "returned 2 values".                                                                                     | A mismatch fails clearly instead of silently dropping or misnaming outputs.                          |
-| `test_bad_node_names_fail` (×4)                             | Node names `a.b`, `inputs`, `targets` and `meta` raise `GraphError`.                                                                                                           | Every name stays unambiguous: a dot always splits node from output, and batch groups can't be shadowed. |
-| `test_duplicate_writes_fail`                                | `writes=["y", "y"]` raises `GraphError` "twice".                                                                                                                              | One node can't write the same name twice.                                                             |
-| `test_one_node_graph_reads_batch_and_returns_flat_names`    | A one-node graph reads `inputs.image` and returns exactly `{"student.y": 2x}`, with nothing from the batch copied in.                                                         | The Phase 1 setup: data in, named output out.                                                         |
-| `test_nodes_run_in_dependency_order_not_list_order`         | Nodes given as `[c, b, a]` run as `["a", "b", "c"]`, and `c.y` equals $4x - 2x$ (diagram above).                                                                               | Adding nodes later (teachers, projectors) needs no change to the executor, and list order never matters. |
-| `test_graph_is_a_normal_module`                             | The graph is an `nn.Module`; it exposes one parameter; `state_dict` keys are `nodes.student.module.w`; `eval()`/`train()` reach the inner module; a second graph loaded from the first gives identical outputs. | Optimizers, `.to()`, checkpointing and train/eval switching work through standard torch calls. |
-| `test_gradients_reach_node_parameters`                      | `backward()` on a graph output fills the gradient of the node's parameter.                                                                                                    | The wrappers don't break autograd, so training works.                                                 |
-| `test_deployable_model_is_the_nodes_module`                 | `deployable_model("student")` returns the very `nn.Sequential` passed in, and it gives the same output as the node.                                                           | The exported model is exactly what was trained, preprocessing included, with no copies.              |
-| `test_invalid_graphs_fail_at_build_time` (×3)               | `GraphError` when building a graph with: a duplicate node name; a node reading a name nobody writes (`studnet.y`); a cycle (`a` reads `b`, `b` reads `a`).                   | Wiring mistakes fail immediately, before any data is touched, with a message naming the problem.    |
+| Test | What it checks | Why it matters |
+| --- | --- | --- |
+| `test_manifest_and_running_status_are_written_on_creation` | Right after `LocalFileSink(run, manifest={"seed": 42})`: `manifest.json` has the seed and the environment keys (`python`, `torch`, `git_sha`, `git_dirty`), and `status.json` says `running`. | A run records what it is before anything can go wrong. |
+| `test_events_are_on_disk_before_close` | An event written to an **open** sink can already be read back from `events.jsonl`, with its name, value (`2.5`, from a tensor), stage and step. | A crashed run still leaves its data. |
+| `test_artifact_ref_round_trips` | An `ArtifactRef` in an `artifact` event is read back from JSON as an equal `ArtifactRef`. | Stages can find saved files from the log alone. |
+| `test_summary_holds_last_value_of_each_scalar` | After losses `3, 2, 1` and a top-1 of `0.5`, `summary.json` is exactly `{"train/loss/total": 1.0, "eval/val/top1": 0.5}`; messages are left out. | The summary gives final metrics without replaying the log. |
+| `test_status_event_updates_status_file_with_traceback` | A `traceback` message followed by `status=failed` leaves `status.json` saying `failed`, with the traceback text. | A failed run says why. |
+| `test_existing_run_directory_is_refused` | A second `LocalFileSink` on the same directory raises `FileExistsError`. | Two runs can't mix their logs. |
+| `test_no_temporary_files_are_left` | After a full run the directory holds exactly the four files, with no `.tmp` leftovers. | The write-then-rename steps finish cleanly. |
+| `test_non_json_value_fails_without_writing` | A `table` holding an arbitrary object raises `TypeError` naming the event, and `events.jsonl` stays empty. | A bad value can't leave a broken half-line in the log. |
+| `test_close_is_safe_to_call_twice` | Calling `close()` twice raises nothing. | The router and user code can both close safely. |
+| `test_console_line_format` (×3) | Lines read `[fit step 10] train/loss/total = 0.4321`, `[eval_val] eval/val/top1 = 0.5` and `status = completed`. | Console output is short and readable; floats are rounded to 4 significant figures. |
+| `test_environment_outside_git_has_no_sha` | `environment(repo=tmp_path)` gives `git_sha=None`, `git_dirty=None`, and the real torch version. | Runs outside a git checkout are recorded, not refused (§6.4). |
+| `test_output_sink_is_abstract` | `OutputSink()` raises `TypeError`. | It is an interface (§3.5). |
 
-### `tests/unit/test_bindings.py` — losses and metrics
+### `tests/unit/test_router.py` — fan-out and run status
 
-| Test                                                     | What it checks                                                                                                                                                       | Why it matters                                                                                         |
-| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `test_composer_is_weighted_sum_with_detached_terms`      | With CE (weight 0.7) and multi-margin (weight 0.3), both reading `["student.logits", "targets.class"]`: total $= 0.7\,\ell_{ce} + 0.3\,\ell_{margin}$; logged terms carry no gradient; `backward()` reaches the logits. | Several loss terms combine without trainer changes; logging terms can't hold on to the autograd graph. |
-| `test_plain_callable_loss_is_accepted`                   | A `lambda` loss (not an `nn.Module`) reading one name works and returns a scalar.                                                                                    | Any function returning a scalar can be a loss.                                                         |
-| `test_loss_with_parameters_is_registered`                | A loss that is an `nn.Linear` has its parameters returned by `composer.parameters()`, and nothing else does.                                                       | Learnable loss terms (e.g. projectors) get optimised and moved to the device.                          |
-| `test_non_finite_or_non_scalar_loss_fails` (×2)          | A loss returning NaN, or a vector instead of a scalar, raises `ValueError` naming the loss (`bad`).                                                                 | Broken losses fail at the step they happen, with the culprit named, rather than corrupting training.   |
-| `test_binding_accepts_one_name`                          | `LossBinding(..., reads="student.logits")` stores `["student.logits"]`.                                                                                             | Single-input losses don't need a list.                                                                 |
-| `test_composer_needs_a_binding`                          | `LossComposer([])` raises `ValueError`.                                                                                                                              | An empty composer would otherwise return the integer `0`, which cannot be backpropagated.              |
-| `test_metric_binding_passes_values_in_order`             | Two `update` calls reach the `Recorder` with `preds` and `target` set to the exact logits and labels objects, in that order.                                       | Metrics read values the same way losses do and accumulate across calls.                                |
-
-### `tests/unit/test_adapters.py` — input preprocessing
-
-| Test                                                  | What it checks                                                                                              | Why it matters                                                                                                        |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `test_normalises_without_resizing_when_size_matches`  | At the spec's size, the output is exactly $(x - \mu)/\sigma$, so no resize happened.                         | A CPU crop already at the right size is not resized again.                                                            |
-| `test_resizes_to_spec`                                | A `16×12` input comes out at the spec's `8×6`.                                                              | Each model gets the input size it declares.                                                                           |
-| `test_statistics_are_buffers_not_saved_weights`       | The adapter has no parameters and an empty `state_dict`; `mean` and `std` are buffers.                     | Mean/std move with `.to(device)` but are never trained, and are rebuilt from `InputSpec` rather than read from checkpoints. |
+| Test | What it checks | Why it matters |
+| --- | --- | --- |
+| `test_router_is_an_event_sink_and_broadcasts_in_order` | The router is an `EventSink`; two events reach two sinks in the order `(first, a), (second, a), (first, b), (second, b)`; `close` closes both. | Every destination sees the same events in the same order. |
+| `test_normal_exit_records_completed_and_closes` | Leaving the `with` block normally records exactly one status, `completed`, and closes the sink. | A finished run is marked finished. |
+| `test_exception_records_traceback_and_failed_then_propagates` | A `RuntimeError("boom")` inside the block is still raised; the sink got a `traceback` message containing `RuntimeError: boom`, then `failed`, and was closed. | Failures are recorded **and** still visible to the caller. |
+| `test_keyboard_interrupt_records_interrupted` | `KeyboardInterrupt` inside the block records `interrupted`, closes the sink, and is re-raised. | A cancelled run is told apart from a crashed one. |
+| `test_failing_sink_raises_sink_error_naming_sink_and_event` | A sink whose `write` raises `OSError("disk full")` makes `emit` raise `SinkError` naming `BrokenSink`, the event and the cause. | A storage failure can't be mistaken for success (§3.9). |
+| `test_run_directory_after_a_failed_run` | With a real `LocalFileSink`, a run that logs one loss and then raises `ValueError("loss is nan")` leaves `status.json` = `failed` with that traceback, and `summary.json` = `{"train/loss/total": 1.0}`. | End to end: a crashed run's directory is complete and explains the crash. |

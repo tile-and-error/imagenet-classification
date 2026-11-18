@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4. ModelNode: wrapping a model</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><a href="index.html">lwfm tutorial</a><span>4 / 12</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>4. ModelNode: wrapping a model</h1>
+
+<p class="lead">A <code class="l">ModelNode</code> wraps any <code class="t">nn.Module</code>, <strong>unchanged</strong>. It says what the model reads and what it writes.</p>
+<pre class="code"><code class="language-python">from torch import nn                                    # torch
+from torchvision.models import resnet18                 # torchvision: a standard model
+
+from lwfm.core.graph import ModelNode                   # lwfm
+from lwfm.core.types import InputSpec                   # lwfm
+from lwfm.models.adapters import InputAdapter           # lwfm
+
+student = ModelNode(
+    &quot;student&quot;,                                          # lwfm: the node&#x27;s name
+    nn.Sequential(                                      # torch: run these one after another
+        InputAdapter(InputSpec(image_size=(64, 64))),   # lwfm: resize + normalise (an nn.Module)
+        resnet18(num_classes=10),                       # torchvision: untouched
+    ),
+    reads=&quot;inputs.image&quot;,   # lwfm: passed to forward() as its 1st argument
+    writes=&quot;logits&quot;,        # lwfm: what forward() returns, stored as &quot;student.logits&quot;
+)
+student(batch[&quot;inputs&quot;][&quot;image&quot;])</code></pre>
+<pre class="output">{&#x27;student.logits&#x27;: tensor of shape [8, 10]}</pre>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">nn.Module</code> — the base class of every PyTorch model. You write forward(); PyTorch tracks the weights.</li><li><code class="t">nn.Sequential(a, b)</code> — an nn.Module that runs b(a(x)). One input in, one output out.</li><li><code class="t">resnet18</code> — a ready-made torchvision model. We never edit or subclass it.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">ModelNode(name, module, reads, writes)</code> — is itself an nn.Module. reads go in by position; writes are prefixed with the node name.</li><li><code class="l">InputAdapter(InputSpec(...))</code> — an ordinary nn.Module that resizes (only if needed) and normalises with mean and std.</li><li><code class="l">InputSpec</code> — a small record of what the model expects: image size, mean, std.</li></ul></div></div>
+<h3>What a model may return</h3>
+<table>
+  <tr><th>forward() returns</th><th>writes</th><th>Node outputs</th></tr>
+  <tr><td>a tensor</td><td><code>"logits"</code></td><td><code>student.logits</code></td></tr>
+  <tr><td>a tuple <code>(a, b)</code></td><td><code>["logits", "features"]</code></td><td>both, in order</td></tr>
+  <tr><td>a dict</td><td><code>["logits", "features"]</code></td><td>only the listed keys</td></tr>
+</table>
+<div class="why"><strong>Why?</strong> Wrapping instead of subclassing means any model works as it is: torchvision, timm or your own. Passing values by position means you never need to know what a model calls its arguments. And because preprocessing is the first step of the model's nn.Sequential, the saved model always carries its own preprocessing.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="03-batch-names.html">← 3. Batches and names</a><a rel="next" href="05-graph.html">5. ExecutionGraph: connecting models →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

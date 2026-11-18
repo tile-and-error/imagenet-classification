@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7. Evaluating a model</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><a href="index.html">lwfm tutorial</a><span>7 / 12</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>7. Evaluating a model</h1>
+
+<p class="lead">The <code class="l">Evaluator</code> scores a graph on a whole dataset with a list of <code class="l">MetricBinding</code>s. It changes no weights.</p>
+<pre class="code"><code class="language-python">from torchmetrics.classification import MulticlassAccuracy    # torchmetrics
+from lwfm.evaluation.evaluator import Evaluator                # lwfm
+from lwfm.evaluation.metrics import MetricBinding              # lwfm
+
+metrics = [
+    MetricBinding(f&quot;top{k}&quot;,
+                  MulticlassAccuracy(num_classes=10, top_k=k, average=&quot;micro&quot;),  # torchmetrics
+                  [&quot;student.logits&quot;, &quot;targets.class&quot;])
+    for k in (1, 5)
+]
+result = Evaluator().evaluate(
+    graph, val_loader, metrics,                # val_loader: a torch DataLoader, or any list of batches
+    device=torch.device(&quot;cpu&quot;),                # torch: batches and metrics are moved here
+    split=&quot;val&quot;,                               # lwfm: only names the events, e.g. eval/val/top1
+    event_sink=OutputRouter([ConsoleSink()]),  # lwfm: optional; see slide 9
+)
+result.metrics</code></pre>
+<pre class="output">eval/val/top1 = 0.09375
+eval/val/top5 = 0.5312
+{&#x27;top1&#x27;: 0.09375, &#x27;top5&#x27;: 0.53125}     # an untrained model on random data: chance level</pre>
+<pre class="mermaid">sequenceDiagram
+    participant E as Evaluator (lwfm)
+    participant M as MetricBinding (lwfm)
+    participant G as ExecutionGraph (lwfm)
+    participant S as EventSink (lwfm)
+    E-&gt;&gt;M: metric.reset(), metric.to(device)
+    E-&gt;&gt;G: graph.eval()
+    loop every batch, under torch.inference_mode()
+        E-&gt;&gt;E: to_device(batch, device)
+        E-&gt;&gt;G: graph(batch)
+        G--&gt;&gt;E: outputs
+        E-&gt;&gt;M: update(batch, outputs)
+    end
+    E-&gt;&gt;G: back to train() if it was training
+    E-&gt;&gt;M: metric.compute()
+    E-&gt;&gt;S: emit eval/val/top1, eval/val/top5</pre>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">MulticlassAccuracy(top_k=k)</code> — counts a sample as right if the true class is among the k highest scores.</li><li><code class="t">torch.inference_mode()</code> — no gradients are tracked, so evaluation is faster and can't change any weights.</li><li><code class="t">graph.eval()</code> — dropout off, batch-norm uses its saved statistics.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">Evaluator().evaluate(graph, loader, metrics, *, device, split, event_sink, step)</code> — returns an <code class="l">EvaluationResult</code> whose .metrics is {name: float}.</li><li><code class="l">to_device(batch, device)</code> — moves every tensor in the batch; ids and other values stay as they are.</li><li><strong>Errors</strong> — an empty loader, no metrics, two metrics with one name, or a metric that gives more than one number (e.g. average="none") each raise with the reason.</li></ul></div></div>
+<div class="why"><strong>Why?</strong> Metrics are computed once at the end, not averaged per batch, so the last, smaller batch counts as much per sample as the others. The graph's mode is put back afterwards, so the trainer can call the same Evaluator for validation mid-training. Which average to use belongs to the metric object, so the Evaluator never guesses.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="06-losses-metrics.html">← 6. Losses and metrics</a><a rel="next" href="08-train-vs-infer.html">8. Training vs inference →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>
