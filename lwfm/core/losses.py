@@ -5,7 +5,7 @@ from typing import cast
 import torch
 from torch import Tensor, nn
 
-from lwfm.core.names import as_list, describe, resolve_all
+from lwfm.core.names import as_list, describe_values, resolve_all
 from lwfm.core.types import Batch, Name
 
 
@@ -14,53 +14,63 @@ class LossBinding:
     """Pairs a loss with the values it reads and its weight in the total.
 
     `loss` is any callable returning a scalar tensor, e.g. `nn.CrossEntropyLoss()`.
-    `reads` lists the values passed to it, in argument order, e.g.
+    `inputs` lists the values passed to it, in argument order, e.g.
     `["student.logits", "targets.class"]` for `CrossEntropyLoss(input, target)`.
     """
 
     name: str
     loss: Callable[..., Tensor]
-    reads: Name | Sequence[Name]
+    inputs: Name | Sequence[Name]
     weight: float = 1.0
 
     def __post_init__(self) -> None:
-        self.reads = as_list(self.reads)
+        self.inputs = as_list(self.inputs)
 
 
 class LossComposer(nn.Module):
     """Computes the weighted sum of several losses: total = sum(weight * loss).
 
-    Calling `composer(batch, outputs)` returns `(total, terms)`: `total` for
-    `backward()`, and `terms`, each loss by name and detached, for logging. Raises
-    `ValueError` if a loss isn't a finite scalar. Losses that are `nn.Module`s are
-    registered, so any weights they have are trained and moved with `.to()`.
+    Calling `composer(batch, node_outputs)` returns `(total_loss, loss_terms)`:
+    `total_loss` for `backward()`, and `loss_terms`, each loss by name and
+    detached, for logging. Raises `ValueError` if a loss isn't a finite scalar.
+    Losses that are `nn.Module`s are registered, so any weights they have are
+    trained and moved with `.to()`.
     """
 
-    def __init__(self, bindings: list[LossBinding]):
+    def __init__(self, loss_bindings: list[LossBinding]):
         super().__init__()
-        if not bindings:
+        if not loss_bindings:
             raise ValueError("LossComposer needs at least one LossBinding")
-        self.bindings = bindings
+        self.loss_bindings = loss_bindings
         # Registered: a loss with weights appears in .parameters() and moves with .to().
-        self.losses = nn.ModuleList(
-            b.loss for b in bindings if isinstance(b.loss, nn.Module)
+        self.loss_modules = nn.ModuleList(
+            binding.loss
+            for binding in loss_bindings
+            if isinstance(binding.loss, nn.Module)
         )
 
     def forward(
-        self, batch: Batch, outputs: dict[Name, Tensor]
+        self, batch: Batch, node_outputs: dict[Name, Tensor]
     ) -> tuple[Tensor, dict[str, Tensor]]:
-        terms = {}
-        for b in self.bindings:
-            values = resolve_all(b.reads, batch, outputs)
+        loss_terms = {}
+        for binding in self.loss_bindings:
+            input_values = resolve_all(binding.inputs, batch, node_outputs)
             try:
-                terms[b.name] = b.loss(*values)
+                loss_terms[binding.name] = binding.loss(*input_values)
             except Exception as error:
                 error.add_note(
-                    f"in loss {b.name!r}, reading {describe(b.reads, values)}"
+                    f"in loss {binding.name!r}, reading "
+                    f"{describe_values(binding.inputs, input_values)}"
                 )
                 raise
-        for name, term in terms.items():
+        for name, term in loss_terms.items():
             if term.ndim != 0 or not torch.isfinite(term):
                 raise ValueError(f"loss {name!r} is not a finite scalar: {term}")
-        total = cast(Tensor, sum(b.weight * terms[b.name] for b in self.bindings))
-        return total, {name: term.detach() for name, term in terms.items()}
+        total_loss = cast(
+            Tensor,
+            sum(
+                binding.weight * loss_terms[binding.name]
+                for binding in self.loss_bindings
+            ),
+        )
+        return total_loss, {name: term.detach() for name, term in loss_terms.items()}

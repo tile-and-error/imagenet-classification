@@ -26,12 +26,12 @@ class OutputSink(ABC):
     def close(self) -> None: ...
 
 
-def _json_default(obj: object) -> object:
-    if is_dataclass(obj) and not isinstance(obj, type):
-        return asdict(obj)
-    if isinstance(obj, Path):
-        return str(obj)
-    raise TypeError(f"{type(obj).__name__} is not JSON-safe")
+def _json_default(unencodable_value: object) -> object:
+    if is_dataclass(unencodable_value) and not isinstance(unencodable_value, type):
+        return asdict(unencodable_value)
+    if isinstance(unencodable_value, Path):
+        return str(unencodable_value)
+    raise TypeError(f"{type(unencodable_value).__name__} is not JSON-safe")
 
 
 def to_json(event: RunEvent) -> str:
@@ -41,10 +41,10 @@ def to_json(event: RunEvent) -> str:
         raise TypeError(f"event {event.name!r}: {error}") from None
 
 
-def write_json_atomic(path: Path, data: object) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, default=_json_default) + "\n")
-    os.replace(tmp, path)  # readers never see a half-written file
+def write_json_atomic(target_path: Path, json_data: object) -> None:
+    temp_path = target_path.with_name(target_path.name + ".tmp")
+    temp_path.write_text(json.dumps(json_data, indent=2, default=_json_default) + "\n")
+    os.replace(temp_path, target_path)  # readers never see a half-written file
 
 
 class LocalFileSink(OutputSink):
@@ -57,7 +57,7 @@ class LocalFileSink(OutputSink):
     of every scalar. Refuses a directory that already holds a run.
     """
 
-    def __init__(self, run_dir: str | Path, manifest: dict | None = None):
+    def __init__(self, run_dir: str | Path, manifest_fields: dict | None = None):
         self.run_dir = Path(run_dir)
         events_path = self.run_dir / "events.jsonl"
         if events_path.exists():
@@ -65,35 +65,35 @@ class LocalFileSink(OutputSink):
         self.run_dir.mkdir(parents=True, exist_ok=True)
         write_json_atomic(
             self.run_dir / "manifest.json",
-            {**(manifest or {}), "environment": environment()},
+            {**(manifest_fields or {}), "environment": environment()},
         )
-        self._traceback: str | None = None
+        self._failure_traceback: str | None = None
         self._write_status("running")
-        self._last_scalars: dict[str, object] = {}
-        self._events = events_path.open("a", encoding="utf-8")
+        self._last_scalar_values: dict[str, object] = {}
+        self._events_file = events_path.open("a", encoding="utf-8")
 
     def write(self, event: RunEvent) -> None:
-        line = to_json(event)  # fails before anything is written
-        self._events.write(line + "\n")
-        self._events.flush()
+        json_line = to_json(event)  # fails before anything is written
+        self._events_file.write(json_line + "\n")
+        self._events_file.flush()
         if event.kind == "scalar":
-            self._last_scalars[event.name] = event.value
+            self._last_scalar_values[event.name] = event.value
         elif event.kind == "message" and event.name == "traceback":
-            self._traceback = str(event.value)
+            self._failure_traceback = str(event.value)
         elif event.kind == "status":
             self._write_status(cast(RunStatus, event.value))  # checked by RunEvent
 
     def close(self) -> None:
-        if self._events.closed:
+        if self._events_file.closed:
             return
-        write_json_atomic(self.run_dir / "summary.json", self._last_scalars)
-        self._events.close()
+        write_json_atomic(self.run_dir / "summary.json", self._last_scalar_values)
+        self._events_file.close()
 
     def _write_status(self, status: RunStatus) -> None:
-        record: dict[str, object] = {"status": status, "updated_utc": utc_now()}
-        if self._traceback is not None:
-            record["traceback"] = self._traceback
-        write_json_atomic(self.run_dir / "status.json", record)
+        status_record: dict[str, object] = {"status": status, "updated_utc": utc_now()}
+        if self._failure_traceback is not None:
+            status_record["traceback"] = self._failure_traceback
+        write_json_atomic(self.run_dir / "status.json", status_record)
 
 
 class ConsoleSink(OutputSink):
@@ -103,11 +103,11 @@ class ConsoleSink(OutputSink):
     the console destination, so logging configuration shouldn't hide it.
     """
 
-    def __init__(self, stream: TextIO = sys.stdout):
-        self.stream = stream
+    def __init__(self, output_stream: TextIO = sys.stdout):
+        self.output_stream = output_stream
 
     def write(self, event: RunEvent) -> None:
-        where = " ".join(
+        stage_and_step = " ".join(
             part
             for part in (
                 event.stage,
@@ -115,9 +115,11 @@ class ConsoleSink(OutputSink):
             )
             if part
         )
-        value = f"{event.value:.4g}" if isinstance(event.value, float) else event.value
-        prefix = f"[{where}] " if where else ""
-        self.stream.write(f"{prefix}{event.name} = {value}\n")
+        shown_value = (
+            f"{event.value:.4g}" if isinstance(event.value, float) else event.value
+        )
+        prefix = f"[{stage_and_step}] " if stage_and_step else ""
+        self.output_stream.write(f"{prefix}{event.name} = {shown_value}\n")
 
     def close(self) -> None:
-        self.stream.flush()
+        self.output_stream.flush()

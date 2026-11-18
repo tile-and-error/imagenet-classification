@@ -37,10 +37,10 @@ metrics = [
 result = Evaluator().evaluate(
     graph, val_loader, metrics,                # val_loader: a torch DataLoader, or any list of batches
     device=torch.device(&quot;cpu&quot;),                # torch: batches and metrics are moved here
-    split=&quot;val&quot;,                               # lwfm: only names the events, e.g. eval/val/top1
+    split_name=&quot;val&quot;,                               # lwfm: only names the events, e.g. eval/val/top1
     event_sink=OutputRouter([ConsoleSink()]),  # lwfm: optional; see slide 9
 )
-result.metrics</code></pre>
+result.metric_values</code></pre>
 <pre class="output">eval/val/top1 = 0.09375
 eval/val/top5 = 0.5312
 {&#x27;top1&#x27;: 0.09375, &#x27;top5&#x27;: 0.53125}     # an untrained model on random data: chance level</pre>
@@ -54,13 +54,13 @@ eval/val/top5 = 0.5312
     loop every batch, under torch.inference_mode()
         E-&gt;&gt;E: to_device(batch, device)
         E-&gt;&gt;G: graph(batch)
-        G--&gt;&gt;E: outputs
-        E-&gt;&gt;M: update(batch, outputs)
+        G--&gt;&gt;E: node_outputs
+        E-&gt;&gt;M: update(batch, node_outputs)
     end
     E-&gt;&gt;G: back to train() if it was training
     E-&gt;&gt;M: metric.compute()
     E-&gt;&gt;S: emit eval/val/top1, eval/val/top5</pre>
-<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">MulticlassAccuracy(top_k=k)</code> — counts a sample as right if the true class is among the k highest scores.</li><li><code class="t">torch.inference_mode()</code> — no gradients are tracked, so evaluation is faster and can't change any weights.</li><li><code class="t">graph.eval()</code> — dropout off, batch-norm uses its saved statistics.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">Evaluator().evaluate(graph, loader, metrics, *, device, split, event_sink, step)</code> — returns an <code class="l">EvaluationResult</code> whose .metrics is {name: float}.</li><li><code class="l">to_device(batch, device)</code> — moves every tensor in the batch; ids and other values stay as they are.</li><li><strong>Errors</strong> — an empty loader, no metrics, two metrics with one name, or a metric that gives more than one number (e.g. average="none") each raise with the reason.</li></ul></div></div>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">MulticlassAccuracy(top_k=k)</code> — counts a sample as right if the true class is among the k highest scores.</li><li><code class="t">torch.inference_mode()</code> — no gradients are tracked, so evaluation is faster and can't change any weights.</li><li><code class="t">graph.eval()</code> — dropout off, batch-norm uses its saved statistics.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">Evaluator().evaluate(graph, data_loader, metric_bindings, *, device, split_name, event_sink, training_step)</code> — returns an <code class="l">EvaluationResult</code> whose .metric_values is {name: float}.</li><li><code class="l">to_device(batch, device)</code> — moves every tensor in the batch; ids and other values stay as they are.</li><li><strong>Errors</strong> — an empty loader, no metrics, two metrics with one name, or a metric that gives more than one number (e.g. average="none") each raise with the reason.</li></ul></div></div>
 <div class="why"><strong>Why?</strong> Metrics are computed once at the end, not averaged per batch, so the last, smaller batch counts as much per sample as the others. The graph's mode is put back afterwards, so the trainer can call the same Evaluator for validation mid-training. Which average to use belongs to the metric object, so the Evaluator never guesses.</div>
 
 </main>

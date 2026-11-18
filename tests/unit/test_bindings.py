@@ -66,7 +66,7 @@ def test_non_finite_or_non_scalar_loss_fails(batch, outputs, value):
 
 
 def test_binding_accepts_one_name():
-    assert LossBinding("sq", lambda x: x, "student.logits").reads == ["student.logits"]
+    assert LossBinding("sq", lambda x: x, "student.logits").inputs == ["student.logits"]
 
 
 def test_composer_needs_a_binding():

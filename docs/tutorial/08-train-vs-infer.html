@@ -30,7 +30,7 @@ torch.save(model.state_dict(), &quot;weights.pt&quot;)     # torch: save only th
 
 with torch.inference_mode():                     # torch: no gradient bookkeeping
     probs = model(torch.rand(1, 3, 120, 80)).softmax(dim=-1)  # any image size; resized inside</code></pre>
-<pre class="output">model is the same nn.Sequential(InputAdapter, resnet18) we built on slide 4; probs has shape [1, 10]</pre>
+<pre class="output">model is the same nn.Sequential(Resize, Normalize, resnet18) we built on slide 4; probs has shape [1, 10]</pre>
 <table>
   <tr><th></th><th>Training</th><th>Inference</th></tr>
   <tr><td>Input</td><td>batch dict with inputs <em>and</em> targets</td><td>a plain image tensor</td></tr>
@@ -38,7 +38,7 @@ with torch.inference_mode():                     # torch: no gradient bookkeepin
   <tr><td>Uses names?</td><td>yes: nodes, losses, metrics are wired by name</td><td>no: just <code class="t">model(image)</code></td></tr>
   <tr><td>Mode</td><td><code class="t">graph.train()</code>, gradients on</td><td><code class="t">model.eval()</code>, <code class="t">torch.inference_mode()</code></td></tr>
 </table>
-<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">.train() / .eval()</code> — switch layers like dropout and batch-norm between training and inference behaviour.</li><li><code class="t">state_dict() / torch.save</code> — the model's weights as a dict, saved to a file.</li><li><code class="t">torch.inference_mode()</code> — runs faster and uses less memory by not tracking gradients.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">deployable_model(node)</code> — returns that node's module, sharing weights with the graph (no copy). You must name the node: the graph doesn't know which one is "the student".</li></ul></div></div>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">.train() / .eval()</code> — switch layers like dropout and batch-norm between training and inference behaviour.</li><li><code class="t">state_dict() / torch.save</code> — the model's weights as a dict, saved to a file.</li><li><code class="t">torch.inference_mode()</code> — runs faster and uses less memory by not tracking gradients.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">deployable_model(node_name)</code> — returns that node's module, sharing weights with the graph (no copy). You must name the node: the graph doesn't know which one is "the student".</li></ul></div></div>
 <div class="why"><strong>Why?</strong> The thing we measure and ship must be the student alone: no teachers, no losses, no framework. Because it's a plain nn.Module with its preprocessing inside, it can be benchmarked fairly, reloaded, or wrapped for TIAToolbox.</div>
 
 </main>

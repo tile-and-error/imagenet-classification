@@ -12,7 +12,7 @@ from lwfm.results.events import EventSink, RunEvent
 
 @dataclass(frozen=True)
 class EvaluationResult:
-    metrics: dict[str, float]
+    metric_values: dict[str, float]
 
 
 class Evaluator:
@@ -20,60 +20,68 @@ class Evaluator:
     under `torch.inference_mode()`, update every metric per batch, compute once at
     the end. The graph's train/eval mode is restored afterwards.
 
-    With an `event_sink`, each value is emitted as the scalar `eval/<split>/<name>`.
+    With an `event_sink`, each value is emitted as the scalar
+    `eval/<split_name>/<metric name>` at `training_step`.
     """
 
     def evaluate(
         self,
         graph: ExecutionGraph,
-        loader: Iterable[Batch],
-        metrics: Sequence[MetricBinding],
+        data_loader: Iterable[Batch],
+        metric_bindings: Sequence[MetricBinding],
         *,
         device: torch.device,
-        split: str = "val",
+        split_name: str = "val",
         event_sink: EventSink | None = None,
-        step: int | None = None,
+        training_step: int | None = None,
     ) -> EvaluationResult:
-        names = [m.name for m in metrics]
-        if not names:
+        metric_names = [binding.name for binding in metric_bindings]
+        if not metric_names:
             raise ValueError("evaluate needs at least one MetricBinding")
-        if len(set(names)) != len(names):
-            raise ValueError(f"metric names must be unique, got {names}")
+        if len(set(metric_names)) != len(metric_names):
+            raise ValueError(f"metric names must be unique, got {metric_names}")
 
-        for binding in metrics:
+        for binding in metric_bindings:
             binding.metric.reset()
             binding.metric.to(device)
 
         was_training = graph.training
         graph.eval()
-        batches = 0
+        batch_count = 0
         try:
             with torch.inference_mode():
-                for batch in loader:
+                for batch in data_loader:
                     batch = to_device(batch, device)
-                    outputs = graph(batch)
-                    for binding in metrics:
-                        binding.update(batch, outputs)
-                    batches += 1
+                    node_outputs = graph(batch)
+                    for binding in metric_bindings:
+                        binding.update(batch, node_outputs)
+                    batch_count += 1
         finally:
             graph.train(was_training)
-        if batches == 0:
-            raise ValueError("loader yielded no batches")
+        if batch_count == 0:
+            raise ValueError("data_loader yielded no batches")
 
-        values = {m.name: scalar(m) for m in metrics}
+        metric_values = {
+            binding.name: compute_single_value(binding) for binding in metric_bindings
+        }
         if event_sink is not None:
-            for name, value in values.items():
+            for metric_name, value in metric_values.items():
                 event_sink.emit(
-                    RunEvent("scalar", f"eval/{split}/{name}", value, step=step)
+                    RunEvent(
+                        "scalar",
+                        f"eval/{split_name}/{metric_name}",
+                        value,
+                        step=training_step,
+                    )
                 )
-        return EvaluationResult(values)
+        return EvaluationResult(metric_values)
 
 
-def scalar(binding: MetricBinding) -> float:
-    value = binding.metric.compute()
-    if value.numel() != 1:
+def compute_single_value(binding: MetricBinding) -> float:
+    computed = binding.metric.compute()
+    if computed.numel() != 1:
         raise TypeError(
-            f"metric {binding.name!r} computed shape {tuple(value.shape)}, "
+            f"metric {binding.name!r} computed shape {tuple(computed.shape)}, "
             "expected one number"
         )
-    return value.item()
+    return computed.item()

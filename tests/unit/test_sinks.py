@@ -21,7 +21,7 @@ def read_events(run_dir):
 
 
 def test_manifest_and_running_status_are_written_on_creation(tmp_path):
-    LocalFileSink(tmp_path / "run", manifest={"seed": 42})
+    LocalFileSink(tmp_path / "run", manifest_fields={"seed": 42})
     manifest = read_json(tmp_path / "run" / "manifest.json")
     assert manifest["seed"] == 42
     assert {"python", "torch", "git_sha", "git_dirty"} <= manifest["environment"].keys()
@@ -119,7 +119,7 @@ def test_console_line_format(event, line):
 
 
 def test_environment_outside_git_has_no_sha(tmp_path):
-    env = environment(repo=tmp_path)
+    env = environment(repo_dir=tmp_path)
     assert env["git_sha"] is None
     assert env["git_dirty"] is None
     assert env["torch"] == torch.__version__

@@ -27,33 +27,32 @@
 <pre class="code"><code class="language-python">from lwfm.core.graph import ExecutionGraph               # lwfm
 
 probe = ModelNode(&quot;probe&quot;, nn.Linear(10, 2),             # torch: a single linear layer
-                  reads=&quot;student.logits&quot;, writes=&quot;logits&quot;)
+                  inputs=&quot;student.logits&quot;, outputs=&quot;logits&quot;)
 
 graph = ExecutionGraph([probe, student])   # lwfm: the list order doesn&#x27;t matter
-graph.order                                # [&#x27;student&#x27;, &#x27;probe&#x27;]
+graph.node_run_order                                # [&#x27;student&#x27;, &#x27;probe&#x27;]
 graph(batch)                               # one dict with every node&#x27;s outputs</code></pre>
 <pre class="output">{&#x27;student.logits&#x27;: [8, 10], &#x27;probe.logits&#x27;: [8, 2]}</pre>
 <p><strong>A node runs once per call, however many nodes read it.</strong> Outputs go into one dict; every reader gets the same tensor from it.</p>
 <pre class="code"><code class="language-python">shared = ExecutionGraph([
-    ModelNode(&quot;head_a&quot;, nn.Linear(16, 2), reads=&quot;backbone.features&quot;, writes=&quot;logits&quot;),
-    ModelNode(&quot;head_b&quot;, nn.Linear(16, 3), reads=&quot;backbone.features&quot;, writes=&quot;logits&quot;),
-    ModelNode(&quot;backbone&quot;, backbone, reads=&quot;inputs.image&quot;, writes=&quot;features&quot;),
-], sample=batch)    # backbone has no InputAdapter, so give a real batch for the shape check
-shared.order       # [&#x27;backbone&#x27;, &#x27;head_a&#x27;, &#x27;head_b&#x27;]: backbone runs once, both heads reuse it</code></pre>
+    ModelNode(&quot;head_a&quot;, nn.Linear(16, 2), inputs=&quot;backbone.features&quot;, outputs=&quot;logits&quot;),
+    ModelNode(&quot;head_b&quot;, nn.Linear(16, 3), inputs=&quot;backbone.features&quot;, outputs=&quot;logits&quot;),
+    ModelNode(&quot;backbone&quot;, backbone, inputs=&quot;inputs.image&quot;, outputs=&quot;features&quot;),
+], preflight_sample=batch)    # check shapes on this batch while building (below)
+shared.node_run_order       # [&#x27;backbone&#x27;, &#x27;head_a&#x27;, &#x27;head_b&#x27;]: backbone runs once, both heads reuse it</code></pre>
 <p class="muted">Nothing is kept between calls: the next <code class="l">graph(batch)</code> runs everything again on the new batch. Putting the <em>same</em> module object into two nodes runs it twice; that shares weights, not outputs.</p>
 <p>Mistakes fail when the graph is <em>built</em>, before any data is used:</p>
-<pre class="code"><code class="language-python">ExecutionGraph([ModelNode(&quot;probe&quot;, nn.Linear(10, 2), reads=&quot;studnet.logits&quot;, writes=&quot;logits&quot;)])</code></pre>
+<pre class="code"><code class="language-python">ExecutionGraph([ModelNode(&quot;probe&quot;, nn.Linear(10, 2), inputs=&quot;studnet.logits&quot;, outputs=&quot;logits&quot;)])</code></pre>
 <pre class="output">GraphError: &#x27;probe&#x27; reads &#x27;studnet.logits&#x27;, which no node writes</pre>
-<p>Wrong <em>shapes</em> only show up when data flows, so building the graph also runs it once on a tiny batch (the <strong>preflight</strong> check):</p>
-<pre class="code"><code class="language-python">graph = ExecutionGraph([student])          # sample=&quot;default&quot;: zeros shaped by the InputSpec
-graph.shapes                               # {&#x27;student.logits&#x27;: (2, 10)}, for the log
-ExecutionGraph([student], sample=batch)    # or check with a real batch
-ExecutionGraph([student], sample=None)     # or skip the check
+<p>Wrong <em>shapes</em> only show up when data flows, so give the graph a <code>sample</code> batch and building it also runs it once on that batch (the <strong>preflight</strong> check):</p>
+<pre class="code"><code class="language-python">graph = ExecutionGraph([student], preflight_sample=batch)   # any batch works, even zeros
+graph.preflight_output_shapes                                      # {&#x27;student.logits&#x27;: (8, 10)}, for the log
+ExecutionGraph([student])                         # no sample: no check, shapes is None
 
-probe = ModelNode(&quot;probe&quot;, nn.Linear(512, 2), reads=&quot;student.logits&quot;, writes=&quot;logits&quot;)
-ExecutionGraph([student, probe])           # 512 should be 10: fails while building</code></pre>
-<pre class="output">RuntimeError: mat1 and mat2 shapes cannot be multiplied (2x10 and 512x2)
-in node &#x27;probe&#x27;, reading student.logits (2, 10)</pre>
+probe = ModelNode(&quot;probe&quot;, nn.Linear(512, 2), inputs=&quot;student.logits&quot;, outputs=&quot;logits&quot;)
+ExecutionGraph([student, probe], preflight_sample=batch)    # 512 should be 10: fails while building</code></pre>
+<pre class="output">RuntimeError: mat1 and mat2 shapes cannot be multiplied (8x10 and 512x2)
+in node &#x27;probe&#x27;, reading student.logits (8, 10)</pre>
 <p class="muted">The check also fails if an output loses the batch size as its first dimension. It runs in eval mode with no gradients and leaves the graph in train mode; <code class="l">graph.preflight(batch)</code> re-runs it later. The error keeps PyTorch's type. The note naming the node is added in ordinary runs too, and losses and metrics add one naming themselves.</p>
 <pre class="mermaid">classDiagram
     direction TB
@@ -66,33 +65,27 @@ in node &#x27;probe&#x27;, reading student.logits (2, 10)</pre>
     class ExecutionGraph {
         &lt;&lt;lwfm&gt;&gt;
         +ModuleDict nodes
-        +list order
-        +dict shapes
+        +list node_run_order
+        +dict preflight_output_shapes
         +forward(batch) dict
-        +preflight(sample) dict
-        +deployable_model(node) Module
+        +preflight(preflight_sample) dict
+        +deployable_model(node_name) Module
     }
     class ModelNode {
         &lt;&lt;lwfm&gt;&gt;
         +str name
         +Module module
-        +list reads
-        +list writes
-        +forward(*values) dict
-    }
-    class InputAdapter {
-        &lt;&lt;lwfm&gt;&gt;
-        +forward(image) Tensor
+        +list inputs
+        +list outputs
+        +forward(*input_values) dict
     }
     Module &lt;|-- ExecutionGraph
     Module &lt;|-- ModelNode
     Module &lt;|-- Sequential
-    Module &lt;|-- InputAdapter
     ExecutionGraph *-- &quot;1..*&quot; ModelNode : holds
-    ModelNode *-- &quot;1&quot; Module : holds, unchanged
-    Sequential o-- InputAdapter : often the first step</pre>
+    ModelNode *-- &quot;1&quot; Module : holds, unchanged</pre>
 <p class="muted">Every lwfm class here <em>is</em> an <code class="t">nn.Module</code>. Hollow arrows = "is a"; diamonds = "holds".</p>
-<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">nn.ModuleDict</code> — a dict of modules that PyTorch can see. The graph stores its nodes in one.</li><li><code class="t">.parameters()  .to()  .train()  .eval()  .state_dict()</code> — all work on the graph, because it is an nn.Module. Weights are saved under keys like nodes.student.module.1.fc.weight.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">ExecutionGraph(nodes, sample=&quot;default&quot;)</code> — checks names, finds the run order, checks shapes on a sample (graph.shapes), then graph(batch) returns {name: tensor}.</li><li><code class="l">GraphError</code> — raised for a duplicate node name, a read nothing writes, a loop, or an output that loses the batch dimension.</li></ul></div></div>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">nn.ModuleDict</code> — a dict of modules that PyTorch can see. The graph stores its nodes in one.</li><li><code class="t">.parameters()  .to()  .train()  .eval()  .state_dict()</code> — all work on the graph, because it is an nn.Module. Weights are saved under keys like nodes.student.module.1.fc.weight.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">ExecutionGraph(nodes, preflight_sample=None)</code> — checks names, finds the run order, checks shapes on the sample if given (graph.preflight_output_shapes), then graph(batch) returns {name: tensor}.</li><li><code class="l">GraphError</code> — raised for a duplicate node name, a read nothing writes, a loop, or an output that loses the batch dimension.</li></ul></div></div>
 <div class="why"><strong>Why?</strong> With one node you barely need a graph, but distillation needs several models reading one batch. Building the general version now means adding a teacher later is one more list entry, not a second code path.</div>
 
 </main>

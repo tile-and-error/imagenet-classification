@@ -36,8 +36,8 @@ pre { overflow-x: auto; border-radius: 8px; border: 1px solid var(--line); paddi
   font-size: 14px; line-height: 1.45; }
 pre.code { background: var(--card); }
 pre.code code { font-size: 14px; }
-pre.output { background: var(--why); color: var(--muted); margin-top: -4px; }
-pre.output::before { content: "Output"; display: block; font: 600 12px system-ui, sans-serif;
+pre.outputs { background: var(--why); color: var(--muted); margin-top: -4px; }
+pre.outputs::before { content: "Output"; display: block; font: 600 12px system-ui, sans-serif;
   text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
 pre.mermaid { background: var(--card); text-align: center; }
 table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 15px; display: block;

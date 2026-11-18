@@ -9,9 +9,10 @@ def to_device(batch: Batch, device: torch.device) -> Batch:
     paths) are kept as they are."""
     return {
         group: {
-            k: v.to(device) if isinstance(v, Tensor) else v for k, v in values.items()
+            key: value.to(device) if isinstance(value, Tensor) else value
+            for key, value in group_values.items()
         }
-        if isinstance(values, dict)
-        else values
-        for group, values in batch.items()
+        if isinstance(group_values, dict)
+        else group_values
+        for group, group_values in batch.items()
     }

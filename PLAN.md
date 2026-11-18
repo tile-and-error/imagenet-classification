@@ -16,7 +16,7 @@ CS407 studies efficient models for computational pathology: **knowledge distilla
 
 This plan merges those requirements with the earlier `alternative-plan.zip` and the design discussion that followed it:
 
-- **Kept:** stage-based runs, model input specifications, explicit adapters, reproducibility, saved stage outputs, torchmetrics, configurable output destinations, plain-Python use, synthetic smoke tests, later caching of teacher outputs, and fair benchmarks.
+- **Kept:** stage-based runs, per-model preprocessing, explicit adapters, reproducibility, saved stage outputs, torchmetrics, configurable output destinations, plain-Python use, synthetic smoke tests, later caching of teacher outputs, and fair benchmarks.
 - **Changed:** a model's computation is a small **graph of named steps**, not a fixed "model + teachers" bundle; losses and metrics read their inputs **by name**, not from a shared global object; each technique plugs in at **the stage where it acts**, with optional bundles later.
 - **Deferred:** a general distributed graph engine, multi-GPU training, full workflow caching, dashboards, automatic adapter design, FPGA deployment, full WSI processing, and all advanced optimisations, until the baseline works.
 
@@ -129,7 +129,7 @@ Agents implement these defaults unless the team changes them in Phase 0. They ar
 ### Phase 1 assumptions
 
 - Inputs are **RGB classification** images. Top-5 is computed only when `num_classes >= 5`.
-- `inputs.image` holds float CHW tensors in `[0, 1]`. Per-model resizing and normalisation happen **exactly once**, in the `InputAdapter` at the start of the model's `nn.Sequential`. `ImageFolder` decodes on CPU. Original image sizes may differ.
+- `inputs.image` holds float CHW tensors in `[0, 1]`. Per-model resizing and normalisation happen **exactly once**, as the first steps of the model's `nn.Sequential`: torchvision's `v2.Resize` and `v2.Normalize`, or any other `nn.Module` the user chooses. lwfm has no preprocessing class of its own. `ImageFolder` decodes on CPU. Original image sizes may differ.
 - Targets are zero-indexed integer class IDs in `[0, K)`, as `torch.long`.
 - The ImageNet-style folder groups images by class name, with **one frozen class-name-to-index map** shared by every split. Never build a separate map per split.
 - Phase 1 needs no full ImageNet-1k download or pretraining. The team supplies a properly licensed folder dataset. Synthetic data proves the code runs; it supports **no accuracy claim**.
@@ -187,7 +187,7 @@ Later tasks **add** keys and never rename them: segmentation adds `targets.mask`
 
 **Straight chains are plain torch; the graph is only for branches.** Anything that runs one step after another (preprocessing then a model, a backbone then a head) is an ordinary `nn.Module`, usually `nn.Sequential(...)`. `ExecutionGraph` is needed only where values **branch or merge**: a teacher and a student reading the same image, a projector reading the student's features, a loss reading two outputs. _Why:_ `nn.Sequential` already handles registration, `.to()`, `state_dict()`, indexing and slicing, so re-implementing chains in the graph would add code and nothing else.
 
-Phase 1 needs six objects. Four of them **are** `nn.Module`s, so `.parameters()`, `.to()`, `.train()`, `.eval()`, `state_dict()` and autograd work on them with no extra code. The other two are dataclasses that pair an existing torch or torchmetrics object with the names it reads.
+Phase 1 needs five objects. Three of them **are** `nn.Module`s, so `.parameters()`, `.to()`, `.train()`, `.eval()`, `state_dict()` and autograd work on them with no extra code. The other two are dataclasses that pair an existing torch or torchmetrics object with the names it reads.
 
 **Class diagram (Phase 1)**
 
@@ -205,68 +205,56 @@ classDiagram
     }
     class ExecutionGraph {
         +ModuleDict nodes
-        +list order
+        +list node_run_order
+        +dict preflight_output_shapes
         +forward(batch) dict
-        +deployable_model(node) Module
+        +preflight(preflight_sample) dict
+        +deployable_model(node_name) Module
     }
     class ModelNode {
         +str name
         +Module module
-        +list reads
-        +list writes
+        +list inputs
         +list outputs
-        +forward(*values) dict
-    }
-    class InputAdapter {
-        +InputSpec spec
-        +forward(image) Tensor
-    }
-    class InputSpec {
-        <<dataclass>>
-        +tuple image_size
-        +tuple mean
-        +tuple std
+        +list output_names
+        +forward(*input_values) dict
     }
     class LossComposer {
-        +list bindings
-        +forward(batch, outputs) tuple
+        +list loss_bindings
+        +forward(batch, node_outputs) tuple
     }
     class LossBinding {
         <<dataclass>>
         +str name
         +Callable loss
-        +list reads
+        +list inputs
         +float weight
     }
     class MetricBinding {
         <<dataclass>>
         +str name
         +Metric metric
-        +list reads
-        +update(batch, outputs)
+        +list inputs
+        +update(batch, node_outputs)
     }
 
     Module <|-- Sequential
     Module <|-- ExecutionGraph
     Module <|-- ModelNode
-    Module <|-- InputAdapter
     Module <|-- LossComposer
     ExecutionGraph *-- "1..*" ModelNode : nodes
     ModelNode *-- "1" Module : module, unchanged
-    Sequential o-- InputAdapter : e.g. first step
-    InputAdapter --> InputSpec
+    Sequential o-- Module : e.g. v2.Resize, v2.Normalize, resnet18
     LossComposer *-- "1..*" LossBinding
     MetricBinding *-- "1" Metric
 ```
 
-Read it as: a graph **holds** nodes; a node **holds** one untouched module, often an `nn.Sequential` that starts with an `InputAdapter`; a composer **holds** loss bindings; a metric binding **holds** one torchmetrics metric. Nothing inherits from anything except `nn.Module`. One function, `resolve_all(names, batch, outputs)` (not drawn), turns names into values; the graph, the composer and the metric bindings all call it, so a name means the same thing everywhere.
+Read it as: a graph **holds** nodes; a node **holds** one untouched module, often an `nn.Sequential` of preprocessing transforms then the model; a composer **holds** loss bindings; a metric binding **holds** one torchmetrics metric. Nothing inherits from anything except `nn.Module`. One function, `resolve_all(names, batch, outputs)` (not drawn), turns names into values; the graph, the composer and the metric bindings all call it, so a name means the same thing everywhere.
 
 | Object           | Is a        | Job                                                                                  | Why it exists                                                                                          |
 | ---------------- | ----------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `ModelNode`      | `nn.Module` | Passes the values it `reads` to its module, in order; stores what it returns under its `writes` | Any model works as-is, whatever its argument names or return type (Tensor, tuple or dict).       |
+| `ModelNode`      | `nn.Module` | Passes its `inputs` to its module, in order; stores what it returns under its `outputs` | Any model works as-is, whatever its argument names or return type (Tensor, tuple or dict).       |
 | `ExecutionGraph` | `nn.Module` | Runs nodes in dependency order; returns `{name: Tensor}`                             | One class serves 1 node now and $n$ nodes later, so KD needs no second execution path.                 |
-| `InputSpec`      | dataclass   | States what a model expects: size, mean, std                                         | Teacher and student may expect different inputs; each states its own, and the run logs it.            |
-| `InputAdapter`   | `nn.Module` | Resizes (only if needed) and normalises, $x \mapsto (\mathrm{resize}(x)-\mu)/\sigma$ | Preprocessing is the first step of the model's own `nn.Sequential`, so it travels with the deployed model. |
 | `LossBinding`    | dataclass   | Pairs a loss with the values it reads and a weight                                   | `nn.CrossEntropyLoss` is used unwrapped; only the wiring is new.                                       |
 | `LossComposer`   | `nn.Module` | Computes $\mathcal{L} = \sum_i w_i \ell_i$ and per-term logs                         | Adding a loss term (KD, regulariser) is one more list entry, not a trainer change.                     |
 | `MetricBinding`  | dataclass   | Pairs a torchmetrics metric with the values it reads                                 | The same metric can score the student or a teacher by changing one name.                               |
@@ -280,7 +268,7 @@ flowchart LR
         CLS["targets.class<br/>[B] int64"]
     end
     subgraph N["ModelNode 'student' (reads inputs.image, writes logits)"]
-        AD["InputAdapter<br/>resize, normalise"] --> RN["resnet18<br/>(unchanged)"]
+        AD["v2.Resize, v2.Normalize<br/>(torchvision)"] --> RN["resnet18<br/>(unchanged)"]
     end
     IMG --> AD
     RN --> OUT["graph output<br/>{'student.logits': [B,K]}"]
@@ -304,13 +292,13 @@ sequenceDiagram
     participant O as Optimizer
     T->>G: graph(batch)
     loop each node, in run order
-        G->>G: resolve_all(node.reads, batch, outputs)
+        G->>G: resolve_all(node.inputs, batch, node_outputs)
         G->>N: node(image)
         N->>N: module(image)
         N-->>G: {"student.logits": tensor}
     end
-    G-->>T: outputs
-    T->>C: composer(batch, outputs)
+    G-->>T: node_outputs
+    T->>C: composer(batch, node_outputs)
     C-->>T: total, {"ce": detached}
     T->>T: total.backward()
     T->>O: step(), zero_grad()
@@ -320,21 +308,19 @@ sequenceDiagram
 
 | Where                        | Signature                                                                       | Notes                                                                                                                  |
 | ---------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `lwfm/core/names.py`         | `resolve(name, batch, outputs)`, `resolve_all(names, batch, outputs)`           | Raises `UnknownNameError` (a `KeyError`) naming the missing value.                                                     |
-| `lwfm/core/graph.py`         | `ModelNode(name, module, reads, writes)`                                        | `reads`/`writes` take one name or a list. Node names can't contain `.` or be `inputs`, `targets` or `meta`.            |
-|                              | `ExecutionGraph(nodes, sample="default")`; `graph(batch) -> {name: Tensor}`     | Raises `GraphError` at build time for duplicate names, unknown reads and cycles, then runs the preflight shape check (below); output shapes in `graph.shapes`. |
-|                              | `graph.preflight(sample="default") -> {name: shape} \| None`                    | `sample`: a batch, `"default"` (zeros shaped by the `InputSpec` of the `InputAdapter` in the first node reading each input; `targets.class` as 0) or `None` (skip). Eval mode, no gradients, mode restored; every output must keep the batch size as its first dimension. |
-|                              | `graph.deployable_model(node) -> nn.Module`                                     | The named node's module itself, sharing weights. No default: the graph doesn't know which node is the student.         |
-| `lwfm/core/types.py`         | `InputSpec(channels, image_size, mean, std)`                                    | Frozen dataclass.                                                                                                      |
-| `lwfm/models/adapters.py`    | `InputAdapter(spec)`                                                            | Expects `[B, C, H, W]` in `[0, 1]`. Mean/std are buffers, not saved in `state_dict()`.                                 |
-| `lwfm/core/losses.py`        | `LossBinding(name, loss, reads, weight=1.0)`; `LossComposer(bindings)`          | `composer(batch, outputs) -> (total, {name: detached term})`; raises `ValueError` for a non-finite or non-scalar loss.  |
-| `lwfm/evaluation/metrics.py` | `MetricBinding(name, metric, reads)`; `binding.update(batch, outputs)`          | `metric` is a torchmetrics `Metric`.                                                                                   |
-| `lwfm/evaluation/evaluator.py` | `Evaluator().evaluate(graph, loader, metrics, *, device, split="val", event_sink=None, step=None)` | Returns `EvaluationResult(metrics={name: float})`; see §3.6.                                                    |
+| `lwfm/core/names.py`         | `resolve(value_name, batch, node_outputs)`, `resolve_all(value_names, batch, node_outputs)`           | Raises `UnknownNameError` (a `KeyError`) naming the missing value.                                                     |
+| `lwfm/core/graph.py`         | `ModelNode(name, module, inputs, outputs)`                                        | `inputs`/`outputs` take one name or a list. Node names can't contain `.` or be `inputs`, `targets` or `meta`.            |
+|                              | `ExecutionGraph(nodes, preflight_sample=None)`; `graph(batch) -> {name: Tensor}`          | Raises `GraphError` at build time for duplicate names, unknown reads and cycles. Given a `sample` batch, then runs `preflight(preflight_sample)`; output shapes in `graph.preflight_output_shapes` (`None` without a sample). |
+|                              | `graph.preflight(preflight_sample) -> {name: shape}`                                      | Runs the graph once on `sample` (any batch on the graph's device, even zeros). Eval mode, no gradients, mode restored; every output must keep the batch size as its first dimension. |
+|                              | `graph.deployable_model(node_name) -> nn.Module`                                     | The named node's module itself, sharing weights. No default: the graph doesn't know which node is the student.         |
+| `lwfm/core/losses.py`        | `LossBinding(name, loss, inputs, weight=1.0)`; `LossComposer(loss_bindings)`          | `composer(batch, node_outputs) -> (total_loss, {name: detached loss term})`; raises `ValueError` for a non-finite or non-scalar loss.  |
+| `lwfm/evaluation/metrics.py` | `MetricBinding(name, metric, inputs)`; `binding.update(batch, node_outputs)`          | `metric` is a torchmetrics `Metric`.                                                                                   |
+| `lwfm/evaluation/evaluator.py` | `Evaluator().evaluate(graph, data_loader, metric_bindings, *, device, split_name="val", event_sink=None, training_step=None)` | Returns `EvaluationResult(metric_values={name: float})`; see §3.6.                                                    |
 | `lwfm/core/batch.py`         | `to_device(batch, device)`                                                      | Moves tensors; keeps ids and paths.                                                                                    |
 **Design choices and their reasons**
 
 - **Values are passed by position, not by argument name.** You don't need to know that torchvision calls its argument `x`, and `CrossEntropyLoss(input, target)` and torchmetrics' `update(preds, target)` already take their values in a fixed order. TIAToolbox's IO configs also list a model's inputs in `forward` order, so a TIAToolbox wrapper (§9) lines up one-to-one.
-- **A node writes only under its own name.** `writes="logits"` on node `student` gives `student.logits`, so two nodes can't write the same name and the node name is never typed twice.
+- **A node writes only under its own name.** `outputs="logits"` on node `student` gives `student.logits`, so two nodes can't write the same name and the node name is never typed twice.
 - **The run-order sort exists from Phase 1**, though one node needs none. It is about 15 lines, and with it a second node is just a second list entry. Without it, KD would need a second executor ("avoid a `SingleModelGraph` and then a separate KD graph").
 - **`ModelNode` wraps rather than subclasses.** Researchers keep writing ordinary models; `torchvision`, `timm` and their own code drop in. Subclassing would tie every model to this package.
 - **Nodes live in `nn.ModuleDict`, not a plain dict.** Modules in a plain dict are invisible to `.parameters()`, `.to()` and `state_dict()`, so they would silently not train or not move to the GPU.
@@ -384,7 +370,7 @@ metrics = [
 result = Evaluator().evaluate(
     graph, data.val_dataloader(), metrics, device=torch.device("cpu")
 )
-print(result.metrics)  # {"top1": 0.1, "top5": 0.5}
+print(result.metric_values)  # {"top1": 0.1, "top5": 0.5}
 ```
 
 **One more metric** (continues from the example above). Adding a metric is one more binding; the `Evaluator` is unchanged.
@@ -405,14 +391,14 @@ metrics.append(
 2. a **new keyword argument whose default is the old behaviour**;
 3. a **new key** in the batch or the config.
 
-_Why this is enough:_ the graph only knows a node through `name`, `reads`, `writes` and `forward`, and a loss or metric only through the names it reads. Anything that fits those slots plugs in without the existing code knowing about it.
+_Why this is enough:_ the graph only knows a node through `name`, `inputs`, `outputs` and `forward`, and a loss or metric only through the names it reads. Anything that fits those slots plugs in without the existing code knowing about it.
 
 | Later need                                     | What is added                                                                                       | Phase 1 code touched                         |
 | ---------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------- |
 | A frozen teacher (Phase 2)                     | A second `ModelNode` with `frozen=True`                                                             | `ModelNode`: one keyword, a `train` override, a no-grad branch |
 | Logit KD                                       | A `KDLoss` module and one `LossBinding`                                                             | None                                         |
 | Several teachers                               | More nodes with distinct names (`vit.logits`, `cnn.logits`)                                         | None                                         |
-| Feature KD                                     | The model returns a dict and the node `writes=["logits", "features"]`; a projector node wrapping `nn.Linear` reads `student.features` | None |
+| Feature KD                                     | The model returns a dict and the node `outputs=["logits", "features"]`; a projector node wrapping `nn.Linear` reads `student.features` | None |
 | Features from a model that returns logits only | A `taps=` keyword on `ModelNode`, using forward hooks                                               | `ModelNode`: one keyword                     |
 | Deploying a multi-node student                 | A `nodes=` keyword on `deployable_model` that returns a sub-graph                                   | `ExecutionGraph`: one keyword                |
 | Cached teacher outputs                         | A node that reads `meta.sample_id` and looks up the saved outputs                                   | None                                         |
@@ -424,7 +410,7 @@ _Why this is enough:_ the graph only knows a node through `name`, `reads`, `writ
 
 ```python
 class ModelNode(nn.Module):
-    def __init__(self, name, module, reads, writes, *, frozen=False):
+    def __init__(self, name, module, inputs, outputs, *, frozen=False):
         ...  # Phase 1 body, unchanged
         self.frozen = frozen
         if frozen:
@@ -444,6 +430,7 @@ A researcher then adds a node and a loss term:
 ```python
 import torch.nn.functional as F
 from torchvision.models import resnet50
+from torchvision.transforms import v2
 
 
 class KDLoss(nn.Module):  # KL(teacher || student) on softened logits, times T^2
@@ -462,11 +449,12 @@ teacher_net.load_state_dict(torch.load("teacher_10cls.pt", weights_only=True))
 teacher = ModelNode(
     name="teacher",
     module=nn.Sequential(
-        InputAdapter(InputSpec(image_size=(224, 224))),  # its own input size
+        v2.Resize((224, 224), antialias=True),  # its own input size
+        v2.Normalize(MEAN, STD),  # ImageNet statistics, as for the student
         teacher_net,
     ),
-    reads="inputs.image",
-    writes="logits",  # stored as "teacher.logits"
+    inputs="inputs.image",
+    outputs="logits",  # stored as "teacher.logits"
     frozen=True,
 )
 graph = ExecutionGraph([student, teacher])  # same class, two nodes
@@ -488,8 +476,8 @@ optimizer = torch.optim.SGD((p for p in graph.parameters() if p.requires_grad), 
 
 ```mermaid
 flowchart LR
-    IMG["inputs.image"] --> S["ModelNode 'student'<br/>Sequential: InputAdapter 64×64, resnet18"]
-    IMG --> T["ModelNode 'teacher', frozen<br/>Sequential: InputAdapter 224×224, resnet50"]
+    IMG["inputs.image"] --> S["ModelNode 'student'<br/>Sequential: resize 64×64, normalise, resnet18"]
+    IMG --> T["ModelNode 'teacher', frozen<br/>Sequential: resize 224×224, normalise, resnet50"]
     S -- "student.logits" --> CE["LossBinding 'ce'"]
     Y["targets.class"] --> CE
     S -- "student.logits" --> KD["LossBinding 'kd'"]
@@ -544,7 +532,7 @@ In Phase 1 `prepare_data()` only **checks and reports** data locations; it never
 
 **Manifests:** UTF-8 CSV with columns `sample_id,path,label`. `path` is relative to the dataset root; `sample_id` is stable and unique; `label` is the integer class ID. Save `class_to_idx.json` next to the manifests. Validation checks that all splits share one label map and that no `sample_id` or file appears in two splits. The split command takes an explicit seed, hold-out rule and root, and never overwrites existing split files silently. Official ImageNet val is never used for model selection if it is also the reported test set.
 
-**Transforms:** CPU decode, RGB conversion, train/eval resize and crop as configured, optional horizontal flip, conversion to tensor. Eval transforms are deterministic. Normalisation belongs to the model's `InputAdapter`, not the dataset. The adapter resizes only when the size differs (§3.2), so a CPU crop to the right size is never resized again. The full transform chain is recorded.
+**Transforms:** CPU decode, RGB conversion, train/eval resize and crop as configured, optional horizontal flip, conversion to tensor. Eval transforms are deterministic. Normalisation belongs to the model's own `nn.Sequential` (`v2.Normalize`), not the dataset. `v2.Resize` returns an image that already has the target size unchanged, so a CPU crop to the right size is never resized again. The full transform chain is recorded.
 
 ### 3.6 Trainer and Evaluator
 
@@ -585,11 +573,11 @@ class Evaluator:
     ) -> EvaluationResult: ...  # implemented in lwfm/evaluation/evaluator.py
 ```
 
-`TrainingResult.global_step: int`; `EvaluationResult.metrics: dict[str, float]`, keyed by binding name.
+`TrainingResult.global_step: int`; `EvaluationResult.metric_values: dict[str, float]`, keyed by binding name.
 
 **The trainer does:** move batches to the device, `graph.train()`, forward, loss, `backward()`, optimizer step and zero-grad, step counting, optional validation. It is the own-loop example in `examples/building_blocks.ipynb` (§3.3) plus these. **It does not:** create runs or folders, read YAML, launch Slurm, or know which technique is in use. `event_sink=None` is the notebook default.
 
-**The evaluator does (implemented):** reset each metric and move it to `device`, `graph.eval()` under `torch.inference_mode()`, move each batch with `to_device`, update every metric per batch, compute once at the end, then restore the graph's previous train/eval mode (also on error), so the trainer can call it for validation mid-run. It raises for an empty loader, no or duplicate metric names, and a metric that computes more than one number (e.g. `average="none"`). With an `event_sink`, each value is emitted as the scalar `eval/<split>/<name>` at `step`. `split` only names events; `"val"` is the default because validation is the common call, and the final test passes `split="test"`. The micro/macro choice belongs to the metric object, not the evaluator. Phase 1 reports **micro (global) top-1 and top-5** accuracy when `K >= 5`, the standard ImageNet definition; never a per-class (macro) average under those names. Names: `eval/val/top1`, `eval/val/top5`, and `eval/test/...` for the final test.
+**The evaluator does (implemented):** reset each metric and move it to `device`, `graph.eval()` under `torch.inference_mode()`, move each batch with `to_device`, update every metric per batch, compute once at the end, then restore the graph's previous train/eval mode (also on error), so the trainer can call it for validation mid-run. It raises for an empty loader, no or duplicate metric names, and a metric that computes more than one number (e.g. `average="none"`). With an `event_sink`, each value is emitted as the scalar `eval/<split>/<name>` at `step`. `split` only names events; `"val"` is the default because validation is the common call, and the final test passes `split_name="test"`. The micro/macro choice belongs to the metric object, not the evaluator. Phase 1 reports **micro (global) top-1 and top-5** accuracy when `K >= 5`, the standard ImageNet definition; never a per-class (macro) average under those names. Names: `eval/val/top1`, `eval/val/top5`, and `eval/test/...` for the final test.
 
 **Phase 1 features:** clear epoch/step output, a seed, validation, `max_steps` for smoke runs, CPU or one GPU, FP32 by default. Best/last checkpoints are saved by the stage that calls the trainer. A tiny-batch overfit check is required.
 
@@ -677,7 +665,7 @@ classDiagram
         +Path run_dir
     }
     class ConsoleSink {
-        +TextIO stream
+        +TextIO output_stream
     }
     class RunEvent {
         <<dataclass>>
@@ -700,14 +688,14 @@ classDiagram
 | `lwfm/results/events.py`     | `RunEvent(kind, name, value, stage=None, step=None)`                                  | `kind` ∈ `scalar, table, artifact, status, message`; `timestamp_utc` is set automatically. A one-element tensor scalar is stored as a number; any other tensor raises `TypeError`. |
 |                              | `EventSink` (ABC): `emit(event)`                                                      | What `Trainer` and `Evaluator` accept (§3.6).                                                                                                                  |
 | `lwfm/results/sinks.py`      | `OutputSink` (ABC): `write(event)`, `close()`                                         | A destination.                                                                                                                                                 |
-|                              | `LocalFileSink(run_dir, manifest=None)`                                               | See below. Refuses a directory that already holds a run.                                                                                                       |
-|                              | `ConsoleSink(stream=sys.stdout)`                                                      | One line per event: `[fit step 10] train/loss/total = 0.4321`.                                                                                                 |
+|                              | `LocalFileSink(run_dir, manifest_fields=None)`                                               | See below. Refuses a directory that already holds a run.                                                                                                       |
+|                              | `ConsoleSink(output_stream=sys.stdout)`                                                      | One line per event: `[fit step 10] train/loss/total = 0.4321`.                                                                                                 |
 |                              | `SinkError` (`RuntimeError`)                                                          | A sink failed; names the sink and the event.                                                                                                                   |
-| `lwfm/results/router.py`     | `OutputRouter(sinks)`: `emit(event)`, `close()`; a context manager                     | Sends every event to every sink in order.                                                                                                                      |
+| `lwfm/results/router.py`     | `OutputRouter(output_sinks)`: `emit(event)`, `close()`; a context manager                     | Sends every event to every sink in order.                                                                                                                      |
 | `lwfm/results/manifest.py`   | `environment()`                                                                       | Python/torch/torchvision versions, platform, CUDA device, git SHA and dirty flag (`None` outside a git checkout).                                               |
 | `lwfm/core/types.py`         | `ArtifactRef(kind, path, producer_stage, sha256=None)`                                | The value of an `artifact` event (§3.7).                                                                                                                       |
 
-**Run status.** Wrap a run in `with OutputRouter(sinks) as router:`. A normal exit records `completed`; `KeyboardInterrupt` records `interrupted`; any other exception records its traceback and `failed`, then propagates. Every case closes the sinks. _Why:_ the status can't be left at `running` by a crash, and the traceback is kept (§6.4).
+**Run status.** Wrap a run in `with OutputRouter(output_sinks) as router:`. A normal exit records `completed`; `KeyboardInterrupt` records `interrupted`; any other exception records its traceback and `failed`, then propagates. Every case closes the sinks. _Why:_ the status can't be left at `running` by a crash, and the traceback is kept (§6.4).
 
 **`LocalFileSink`** writes the run directory (§6.4):
 
@@ -741,7 +729,7 @@ repository/
 │   ├── run.py                 # CLI entry point (or cli/run.py)
 │   ├── infer.py               # single-image/batch inference CLI
 │   ├── core/
-│   │   ├── types.py           # Batch, InputSpec, ArtifactRef, results
+│   │   ├── types.py           # Batch, ArtifactRef, results
 │   │   ├── config.py          # strict config loading and validation
 │   │   ├── names.py           # resolve, resolve_all, UnknownNameError
 │   │   ├── graph.py           # ModelNode, ExecutionGraph
@@ -754,7 +742,7 @@ repository/
 │   │   └── splits.py
 │   ├── models/
 │   │   ├── factory.py         # torchvision + custom model builders
-│   │   └── adapters.py        # InputAdapter; later feature adapters
+│   │   └── adapters.py        # later: feature adapters (projectors) for KD
 │   ├── training/
 │   │   ├── trainer.py
 │   │   └── checkpoint.py
@@ -803,7 +791,7 @@ repository/
 1. Confirm the repository and package name (`lwfm` by default). Check whether the existing ImageNet prototype has reusable data or model code; move useful code across selectively rather than keeping an incompatible folder structure.
 2. Check the Python, CUDA/PyTorch driver and GPU limits locally and on DCS. Pick a tested environment and record it in `pyproject.toml` and a lock file. Run `torch` and `torchvision` import tests on **both**.
 3. Set up the package, `ruff` and `pytest`; install in editable mode (`uv sync` or `pip install -e '.[dev]'`).
-4. Write the §3.1–3.4 building blocks (`Batch`, names, `InputSpec`, `InputAdapter`, `ModelNode`, `ExecutionGraph`, `LossBinding`, `LossComposer`, `MetricBinding`) and stubs for `StageResult` and `OutputSink`. Document which are concrete classes and which are abstract interfaces (§3.5).
+4. Write the §3.1–3.4 building blocks (`Batch`, names, `ModelNode`, `ExecutionGraph`, `LossBinding`, `LossComposer`, `MetricBinding`) and stubs for `StageResult` and `OutputSink`. Document which are concrete classes and which are abstract interfaces (§3.5).
 5. Add a small registry of supported components and a safe YAML loader with helpful errors. Reject unknown model names and config keys.
 6. Add a CI workflow running CPU tests and a non-interactive smoke command. CI needs no downloads and no GPU.
 7. Record open choices in `docs/decisions.md` (package name, data roots, split policy, environment).
@@ -821,7 +809,7 @@ repository/
 | Step  | Build                                                                                                 | Must show                                                                 |
 | ----- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | P1.1  | `FakeClassificationDataModule`, `ImageFolderClassificationDataModule`, manifests, collate, transforms | Same batch keys from either source; stable class map                      |
-| P1.2  | `ModelNode`, `ExecutionGraph` (with run order), `InputAdapter`, ResNet18 builder                      | `graph(batch)["student.logits"]` has shape `[B, K]`; `state_dict()` works |
+| P1.2  | `ModelNode`, `ExecutionGraph` (with run order), ResNet18 builder                                      | `graph(batch)["student.logits"]` has shape `[B, K]`; `state_dict()` works |
 | P1.3  | `LossBinding`, `LossComposer`, CE loss                                                                | Finite scalar with a gradient reaching the model weights                  |
 | P1.4  | `Trainer.fit` with optional validation, explicit optimizer, `max_steps`                               | One epoch and a tiny overfit run succeed                                  |
 | P1.5  | `MetricBinding`, `Evaluator`, top-1/top-5 (**done**, §3.6)                                            | Results match a hand-computed example                                     |
@@ -845,13 +833,13 @@ seed: 42
 device: cpu
 model:
   node: student # node name; outputs are student.<write>
-  reads: inputs.image
-  writes: logits
+  inputs: inputs.image
+  outputs: logits
   type: torchvision
   name: resnet18
   num_classes: 10
   pretrained: false
-  input_spec: { image_size: [64, 64] } # becomes the InputAdapter in front of the model
+  preprocess: { resize: [64, 64] } # becomes v2.Resize + v2.Normalize in front of the model
 data:
   type: fake_classification
   num_classes: 10
@@ -864,17 +852,17 @@ data:
 losses:
   - name: ce
     type: cross_entropy
-    reads: [student.logits, targets.class] # CrossEntropyLoss(input, target)
+    inputs: [student.logits, targets.class] # CrossEntropyLoss(input, target)
     weight: 1.0
 metrics:
   - name: top1
     type: topk_accuracy # micro average (§3.6)
     k: 1
-    reads: [student.logits, targets.class] # update(preds, target)
+    inputs: [student.logits, targets.class] # update(preds, target)
   - name: top5
     type: topk_accuracy
     k: 5
-    reads: [student.logits, targets.class]
+    inputs: [student.logits, targets.class]
 training:
   optimizer: { name: sgd, lr: 0.01 }
   epochs: 1
@@ -891,7 +879,7 @@ outputs:
 
 `configs/experiments/imagenet100_resnet18.yaml` uses **the same keys**, with `data.type: imagefolder_classification`, a `root`, frozen `train_manifest` and `val_manifest`, `num_classes: 100`, `image_size: [224, 224]`, a GPU if available, and suitable steps/epochs. With full ImageNet, add a `test_manifest` pointing at the official validation images, reserved for final reporting.
 
-**Note:** ResNet18 runs at 64×64 for smoke tests although pretrained ImageNet models expect larger inputs. Accuracy on random data is meaningless; the smoke test checks the code runs. `InputSpec` overrides must be explicit and logged.
+**Note:** ResNet18 runs at 64×64 for smoke tests although pretrained ImageNet models expect larger inputs. Accuracy on random data is meaningless; the smoke test checks the code runs. Preprocessing overrides must be explicit and logged.
 
 ### 6.3 User-facing commands
 
@@ -975,7 +963,7 @@ Write tests, **not just a demo notebook**:
 ### Order of work
 
 1. Test the run-order sort (§3.2) with several nodes: dependencies, cycle detection, unique names. Trainable nodes stay registered modules.
-2. Add `torchvision` and optionally `timm` model builders with documented output mappings. Use each model's `InputSpec` for its own preprocessing, and check that teacher and student see the same image (the same crop and flip).
+2. Add `torchvision` and optionally `timm` model builders with documented output mappings. Give each model its own preprocessing steps, and check that teacher and student see the same image (the same crop and flip).
 3. Mark teachers with `ModelNode(..., frozen=True)` (§3.4), not with a special trainer. `graph.train()` must not unfreeze a teacher or switch on its dropout.
 4. Add **logit KD**, $T^2\,\mathrm{KL}\big(\mathrm{softmax}(z_t/T)\,\|\,\mathrm{softmax}(z_s/T)\big)$, alongside CE, weighted through `LossComposer`. Teacher and student logits must use **the same classes**; if not, use a matching head or a different KD loss.
 5. Add feature outputs (dict returns, or `taps=` hooks) and explicit adapters: `Linear`, 1×1 conv, pooling/reshape, `TokensToGrid`, `GridToTokens`, **only where they make sense**. Never align features automatically just because shapes fit.
@@ -1087,7 +1075,7 @@ A small wrapper picks one config per array index and runs the same command as a 
 #SBATCH --job-name=lwfm
 #SBATCH --array=0-3%2
 #SBATCH --gres=gpu:1
-#SBATCH --output=slurm-logs/%A_%a.out
+#SBATCH --outputs=slurm-logs/%A_%a.out
 set -euo pipefail
 
 mapfile -t CFGS < experiments/sweep-configs.txt
@@ -1131,7 +1119,7 @@ The resource lines are an **example**, not DCS partition, GPU or time settings; 
 | -------------------- | ------------------------------------------------ | ------------------------------------------- |
 | Core/training        | graph, bindings, trainer, checkpoints            | callbacks, resume, feature outputs          |
 | Data                 | fake data, ImageFolder, fixed splits, transforms | slide/tile/feature datasets                 |
-| Models/KD            | ResNet wrapper, input spec                       | teacher zoo, adapters, KD                   |
+| Models/KD            | ResNet builder, preprocessing                   | teacher zoo, adapters, KD                   |
 | Evaluation           | metrics, model cost benchmarks                   | challenge scores, energy, statistics        |
 | Runs/outputs         | recipe, run directories, config, CI              | Slurm sweeps, aggregation, optional tracker |
 | Compression/research | integration tests and baseline                   | pruning, quantisation, tile selection       |
@@ -1147,7 +1135,7 @@ One person owns `core/` interfaces, to avoid clashing breaking changes. Someone 
 | Over-engineering delays experiments    | Hard Phase 1 gate; later features wait for Phase 1 acceptance.                                                    |
 | ImageNet compute or data unavailable   | FakeData for CI and a small team-supplied ImageFolder subset for the real prototype; no full ImageNet-1k promise. |
 | Unfair scientific comparisons          | Frozen splits, matching transforms/precision/batch protocol, several seeds, no test leakage.                      |
-| Silent input mismatch                  | `InputSpec`, preflight check and explicit names; log mean/std/size (and `mpp` when relevant).                     |
+| Silent input mismatch                  | Preprocessing inside the model, preflight check and explicit names; log mean/std/size (and `mpp` when relevant).                     |
 | A frozen teacher gets trained          | Tests: no gradients, still in eval mode after `graph.train()`.                                                    |
 | Quantisation brings no speed-up        | Measure real backend timings; label simulation separately.                                                        |
 | A compressed model can't be reloaded   | Keep architecture and transform history with each artifact; reload test for every stage.                          |

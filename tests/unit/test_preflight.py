@@ -2,12 +2,11 @@ import pytest
 import torch
 from torch import nn
 from torchmetrics.classification import MulticlassAccuracy
+from torchvision.transforms import v2
 
-from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode, default_batch
+from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
 from lwfm.core.losses import LossBinding, LossComposer
-from lwfm.core.types import InputSpec
 from lwfm.evaluation.metrics import MetricBinding
-from lwfm.models.adapters import InputAdapter
 
 READS = ["student.logits", "targets.class"]
 
@@ -33,7 +32,7 @@ class Probe(nn.Module):
 
 def classifier(*tail):
     return nn.Sequential(
-        InputAdapter(InputSpec(image_size=(16, 16))),
+        v2.Resize((16, 16), antialias=True),
         nn.Flatten(),
         nn.Linear(3 * 16 * 16, 10),
         *tail,
@@ -56,86 +55,66 @@ def batch(size=4, height=16, width=16):
     }
 
 
-def test_default_sample_checks_shapes_at_build_time():
-    graph = ExecutionGraph([student()])
-    assert graph.shapes == {"student.logits": (2, 10)}
+def test_sample_checks_shapes_at_build_time():
+    graph = ExecutionGraph([student()], preflight_sample=batch())
+    assert graph.preflight_output_shapes == {"student.logits": (4, 10)}
 
 
-def test_default_batch_is_zeros_shaped_by_input_spec():
-    reader = ModelNode("reader", Lambda(lambda c: c.float()), "targets.class", "y")
-    graph = ExecutionGraph([student(), reader], sample=None)
-    sample = default_batch(graph)
-    image, label = sample["inputs"]["image"], sample["targets"]["class"]
-    assert image.shape == (2, 3, 16, 16) and not image.any()
-    assert label.dtype == torch.long and label.tolist() == [0, 0]
+def test_sample_of_another_size_is_resized_inside():
+    graph = ExecutionGraph([student()], preflight_sample=batch(5, 40, 30))
+    assert graph.preflight_output_shapes == {"student.logits": (5, 10)}
 
 
-def test_given_batch_is_used():
-    graph = ExecutionGraph([student()], sample=batch(5, 40, 30))  # resized inside
-    assert graph.shapes == {"student.logits": (5, 10)}
-
-
-def test_none_skips_the_check():
+def test_no_sample_skips_the_check():
     def boom(x):
         raise AssertionError("must not run")
 
-    graph = ExecutionGraph([student(Lambda(boom))], sample=None)
-    assert graph.shapes is None
-
-
-def test_unknown_string_fails():
-    with pytest.raises(ValueError, match="'zeros'"):
-        ExecutionGraph([student()], sample="zeros")  # type: ignore[arg-type]
+    graph = ExecutionGraph([student(Lambda(boom))])
+    assert graph.preflight_output_shapes is None
 
 
 def test_shape_mismatch_fails_at_build_time_naming_the_node():
     with pytest.raises(RuntimeError) as info:
-        ExecutionGraph([student(), probe()])
-    assert info.value.__notes__ == ["in node 'probe', reading student.logits (2, 10)"]
+        ExecutionGraph([student(), probe()], preflight_sample=batch())
+    assert info.value.__notes__ == ["in node 'probe', reading student.logits (4, 10)"]
 
 
 def test_note_is_added_in_ordinary_runs_too():
-    graph = ExecutionGraph([student(), probe()], sample=None)
+    graph = ExecutionGraph([student(), probe()])
     with pytest.raises(RuntimeError) as info:
         graph(batch())
     assert info.value.__notes__ == ["in node 'probe', reading student.logits (4, 10)"]
 
 
 def test_preflight_can_be_rerun_with_a_real_batch():
-    graph = ExecutionGraph([student()])
+    graph = ExecutionGraph([student()], preflight_sample=batch())
     assert graph.preflight(batch(3)) == {"student.logits": (3, 10)}
 
 
 def test_dropped_batch_dimension_fails():
-    with pytest.raises(GraphError, match=r"'student.logits' has shape \(10,\).*, 2"):
-        ExecutionGraph([student(Lambda(lambda x: x.sum(dim=0)))])
+    with pytest.raises(GraphError, match=r"'student.logits' has shape \(10,\).*, 4"):
+        ExecutionGraph(
+            [student(Lambda(lambda x: x.sum(dim=0)))], preflight_sample=batch()
+        )
 
 
 def test_runs_in_eval_mode_without_gradients_and_leaves_train_mode():
     spy = Probe()
-    graph = ExecutionGraph([student(spy)])
+    graph = ExecutionGraph([student(spy)], preflight_sample=batch())
     assert spy.seen == [(False, False)]
     assert graph.training
 
 
 def test_mode_is_restored_after_a_failed_rerun():
-    graph = ExecutionGraph([student(), probe()], sample=None)
+    graph = ExecutionGraph([student(), probe()])
     with pytest.raises(RuntimeError):
-        graph.preflight()
+        graph.preflight(batch())
     assert graph.training
 
 
-@pytest.mark.parametrize(
-    ("node", "missing"),
-    [
-        (ModelNode("m", nn.Flatten(), "inputs.image", "x"), "inputs.image"),
-        (ModelNode("m", nn.Flatten(), "targets.mask", "x"), "targets.mask"),
-    ],
-    ids=["input_without_adapter", "target_without_default"],
-)
-def test_values_without_a_default_ask_for_a_batch(node, missing):
-    with pytest.raises(ValueError, match=f"no default value for '{missing}'"):
-        ExecutionGraph([node])
+def test_sample_without_input_tensors_fails():
+    with pytest.raises(ValueError, match="no input tensors"):
+        ExecutionGraph([student()], preflight_sample={"inputs": {}, "targets": {}})
 
 
 def test_loss_failure_names_the_loss():

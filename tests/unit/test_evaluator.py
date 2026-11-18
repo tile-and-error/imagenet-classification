@@ -39,7 +39,7 @@ LOADER = [batch([0, 1, 2]), batch([3])]
 
 def logits_graph(module=None):
     node = ModelNode("student", module or nn.Identity(), "inputs.logits", "logits")
-    return ExecutionGraph([node], sample=LOADER[0])
+    return ExecutionGraph([node], preflight_sample=LOADER[0])
 
 
 def top_k(k):
@@ -71,15 +71,15 @@ def test_micro_top1_top5_match_hand_worked_example():
     result = Evaluator().evaluate(
         logits_graph(), LOADER, [top_k(1), top_k(5)], device=CPU
     )
-    assert result.metrics == pytest.approx({"top1": 0.5, "top5": 0.75})
+    assert result.metric_values == pytest.approx({"top1": 0.5, "top5": 0.75})
 
 
 def test_metric_state_resets_between_runs():
     metrics = [top_k(1)]
     first = Evaluator().evaluate(logits_graph(), LOADER, metrics, device=CPU)
     second = Evaluator().evaluate(logits_graph(), LOADER[1:], metrics, device=CPU)
-    assert first.metrics["top1"] == pytest.approx(0.5)
-    assert second.metrics["top1"] == 0.0
+    assert first.metric_values["top1"] == pytest.approx(0.5)
+    assert second.metric_values["top1"] == 0.0
 
 
 def test_runs_in_eval_and_inference_mode_and_changes_no_weights():
@@ -117,9 +117,9 @@ def test_values_are_emitted_as_eval_split_name():
         LOADER,
         [top_k(1), top_k(5)],
         device=CPU,
-        split="test",
+        split_name="test",
         event_sink=sink,
-        step=7,
+        training_step=7,
     )
     assert [(e.kind, e.name, e.value, e.step) for e in sink.events] == [
         ("scalar", "eval/test/top1", pytest.approx(0.5), 7),

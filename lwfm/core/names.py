@@ -15,28 +15,33 @@ class UnknownNameError(KeyError):
     """
 
 
-def resolve(name: Name, batch: Batch, outputs: dict[Name, Tensor]) -> Any:
-    if name in outputs:
-        return outputs[name]
-    group, _, key = name.partition(".")
+def resolve(value_name: Name, batch: Batch, node_outputs: dict[Name, Tensor]) -> Any:
+    if value_name in node_outputs:
+        return node_outputs[value_name]
+    group, _, key = value_name.partition(".")
     if group in BATCH_GROUPS and key in batch.get(group, {}):
         return batch[group][key]
-    raise UnknownNameError(f"no value named {name!r}; node outputs: {sorted(outputs)}")
+    raise UnknownNameError(
+        f"no value named {value_name!r}; node outputs: {sorted(node_outputs)}"
+    )
 
 
 def resolve_all(
-    names: Sequence[Name], batch: Batch, outputs: dict[Name, Tensor]
+    value_names: Sequence[Name], batch: Batch, node_outputs: dict[Name, Tensor]
 ) -> list[Any]:
-    return [resolve(name, batch, outputs) for name in names]
+    return [resolve(name, batch, node_outputs) for name in value_names]
 
 
-def as_list(names: Name | Sequence[Name]) -> list[Name]:
-    return [names] if isinstance(names, str) else list(names)
+def as_list(one_or_many_names: Name | Sequence[Name]) -> list[Name]:
+    if isinstance(one_or_many_names, str):
+        return [one_or_many_names]
+    return list(one_or_many_names)
 
 
-def describe(names: Sequence[Name], values: Sequence[Any]) -> str:
+def describe_values(value_names: Sequence[Name], values: Sequence[Any]) -> str:
     """`"student.logits (8, 10), targets.class (8,)"`: for error notes."""
     return ", ".join(
-        f"{n} {tuple(v.shape) if isinstance(v, Tensor) else type(v).__name__}"
-        for n, v in zip(names, values, strict=True)
+        f"{name} "
+        f"{tuple(value.shape) if isinstance(value, Tensor) else type(value).__name__}"
+        for name, value in zip(value_names, values, strict=True)
     )

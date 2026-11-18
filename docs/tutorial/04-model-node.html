@@ -26,26 +26,28 @@
 <p class="lead">A <code class="l">ModelNode</code> wraps any <code class="t">nn.Module</code>, <strong>unchanged</strong>. It says what the model reads and what it writes.</p>
 <pre class="code"><code class="language-python">from torch import nn                                    # torch
 from torchvision.models import resnet18                 # torchvision: a standard model
+from torchvision.transforms import v2                   # torchvision: transforms, as nn.Modules
 
 from lwfm.core.graph import ModelNode                   # lwfm
-from lwfm.core.types import InputSpec                   # lwfm
-from lwfm.models.adapters import InputAdapter           # lwfm
+
+MEAN, STD = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)  # ImageNet statistics
 
 student = ModelNode(
     &quot;student&quot;,                                          # lwfm: the node&#x27;s name
     nn.Sequential(                                      # torch: run these one after another
-        InputAdapter(InputSpec(image_size=(64, 64))),   # lwfm: resize + normalise (an nn.Module)
+        v2.Resize((64, 64), antialias=True),            # torchvision: resize (skipped if 64x64)
+        v2.Normalize(MEAN, STD),                        # torchvision: (x - mean) / std
         resnet18(num_classes=10),                       # torchvision: untouched
     ),
-    reads=&quot;inputs.image&quot;,   # lwfm: passed to forward() as its 1st argument
-    writes=&quot;logits&quot;,        # lwfm: what forward() returns, stored as &quot;student.logits&quot;
+    inputs=&quot;inputs.image&quot;,   # lwfm: passed to forward() as its 1st argument
+    outputs=&quot;logits&quot;,        # lwfm: what forward() returns, stored as &quot;student.logits&quot;
 )
 student(batch[&quot;inputs&quot;][&quot;image&quot;])</code></pre>
 <pre class="output">{&#x27;student.logits&#x27;: tensor of shape [8, 10]}</pre>
-<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">nn.Module</code> — the base class of every PyTorch model. You write forward(); PyTorch tracks the weights.</li><li><code class="t">nn.Sequential(a, b)</code> — an nn.Module that runs b(a(x)). One input in, one output out.</li><li><code class="t">resnet18</code> — a ready-made torchvision model. We never edit or subclass it.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">ModelNode(name, module, reads, writes)</code> — is itself an nn.Module. reads go in by position; writes are prefixed with the node name.</li><li><code class="l">InputAdapter(InputSpec(...))</code> — an ordinary nn.Module that resizes (only if needed) and normalises with mean and std.</li><li><code class="l">InputSpec</code> — a small record of what the model expects: image size, mean, std.</li></ul></div></div>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">nn.Module</code> — the base class of every PyTorch model. You write forward(); PyTorch tracks the weights.</li><li><code class="t">nn.Sequential(a, b)</code> — an nn.Module that runs b(a(x)). One input in, one output out.</li><li><code class="t">resnet18</code> — a ready-made torchvision model. We never edit or subclass it.</li><li><code class="t">v2.Resize  v2.Normalize</code> — torchvision transforms. They are nn.Modules, so any preprocessing you like is a step in the nn.Sequential.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">ModelNode(name, module, inputs, outputs)</code> — is itself an nn.Module. inputs go in by position; outputs are prefixed with the node name.</li></ul></div></div>
 <h3>What a model may return</h3>
 <table>
-  <tr><th>forward() returns</th><th>writes</th><th>Node outputs</th></tr>
+  <tr><th>forward() returns</th><th>outputs</th><th>Node outputs</th></tr>
   <tr><td>a tensor</td><td><code>"logits"</code></td><td><code>student.logits</code></td></tr>
   <tr><td>a tuple <code>(a, b)</code></td><td><code>["logits", "features"]</code></td><td>both, in order</td></tr>
   <tr><td>a dict</td><td><code>["logits", "features"]</code></td><td>only the listed keys</td></tr>

@@ -15,11 +15,11 @@ class OutputRouter(EventSink):
     sinks. A sink that fails raises `SinkError` naming the sink and the event.
     """
 
-    def __init__(self, sinks: Iterable[OutputSink]):
-        self.sinks = list(sinks)
+    def __init__(self, output_sinks: Iterable[OutputSink]):
+        self.output_sinks = list(output_sinks)
 
     def emit(self, event: RunEvent) -> None:
-        for sink in self.sinks:
+        for sink in self.output_sinks:
             try:
                 sink.write(event)
             except Exception as error:
@@ -29,34 +29,38 @@ class OutputRouter(EventSink):
                 ) from error
 
     def close(self) -> None:
-        failed: list[str] = []
-        for sink in self.sinks:  # close every sink, even after one fails
+        close_failures: list[str] = []
+        for sink in self.output_sinks:  # close every sink, even after one fails
             try:
                 sink.close()
             except Exception as error:
-                failed.append(f"{type(sink).__name__}: {error}")
-        if failed:
-            raise SinkError(f"failed to close sinks: {'; '.join(failed)}")
+                close_failures.append(f"{type(sink).__name__}: {error}")
+        if close_failures:
+            raise SinkError(f"failed to close sinks: {'; '.join(close_failures)}")
 
     def __enter__(self) -> "OutputRouter":
         return self
 
     def __exit__(
         self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        exception_traceback: TracebackType | None,
     ) -> None:
-        status: RunStatus
+        final_status: RunStatus
         try:
-            if exc_type is None:
-                status = "completed"
-            elif issubclass(exc_type, KeyboardInterrupt):
-                status = "interrupted"
+            if exception_type is None:
+                final_status = "completed"
+            elif issubclass(exception_type, KeyboardInterrupt):
+                final_status = "interrupted"
             else:
-                status = "failed"
-                text = "".join(traceback.format_exception(exc_type, exc, tb))
-                self.emit(RunEvent("message", "traceback", text))
-            self.emit(RunEvent("status", "status", status))
+                final_status = "failed"
+                traceback_text = "".join(
+                    traceback.format_exception(
+                        exception_type, exception, exception_traceback
+                    )
+                )
+                self.emit(RunEvent("message", "traceback", traceback_text))
+            self.emit(RunEvent("status", "status", final_status))
         finally:
             self.close()

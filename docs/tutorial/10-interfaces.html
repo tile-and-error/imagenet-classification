@@ -26,7 +26,7 @@
 <p class="lead">Each kind of change has one place to go. If you find yourself editing the graph or a loop to add a technique, stop: there is a better place.</p>
 <table>
   <tr><th>To add…</th><th>Write…</th><th>Plug it in with…</th><th>Status</th></tr>
-  <tr><td>a model</td><td>any <code class="t">nn.Module</code></td><td><code class="l">ModelNode(name, module, reads, writes)</code></td><td class="ok">works now</td></tr>
+  <tr><td>a model</td><td>any <code class="t">nn.Module</code></td><td><code class="l">ModelNode(name, module, inputs, outputs)</code></td><td class="ok">works now</td></tr>
   <tr><td>a preprocessing step</td><td>any <code class="t">nn.Module</code></td><td>a step in the model's <code class="t">nn.Sequential</code></td><td class="ok">works now</td></tr>
   <tr><td>a second model, projector, selector</td><td>any <code class="t">nn.Module</code></td><td>one more node in the <code class="l">ExecutionGraph</code></td><td class="ok">works now</td></tr>
   <tr><td>a loss</td><td>a function or <code class="t">nn.Module</code> returning one number</td><td><code class="l">LossBinding</code> in the <code class="l">LossComposer</code></td><td class="ok">works now</td></tr>
