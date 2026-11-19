@@ -105,12 +105,14 @@ def test_eval_mode_is_kept_if_graph_was_in_eval():
     assert not graph.training
 
 
-def test_mode_is_restored_when_a_metric_fails():
-    graph = logits_graph()
+@pytest.mark.parametrize("was_training", [True, False], ids=["train", "eval"])
+def test_mode_is_restored_when_a_metric_fails(was_training):
+    # .train(False) is equivalent to .eval()
+    graph = logits_graph().train(was_training)
     bad = MetricBinding("bad", MulticlassAccuracy(num_classes=6), ["targets.missing"])
     with pytest.raises(KeyError, match="targets.missing"):
         Evaluator().evaluate(graph, LOADER, [bad], device=CPU)
-    assert graph.training
+    assert graph.training == was_training
 
 
 def test_values_are_emitted_as_eval_split_name():
