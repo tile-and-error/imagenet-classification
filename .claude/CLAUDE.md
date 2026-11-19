@@ -35,4 +35,5 @@ Every component is built on standard PyTorch primitives and nothing else — mod
 
 Concise, mathematical, specific. Check claims rather than build on them. `ruff` owns
 formatting and lint (see `pyproject.toml`). Keep the code self-documenting, don't add docstrings
-when you don't need to.
+when you don't need to. An exception is the notenook `.ipynb` files, which need more explanations,
+and so heavier on comments.
