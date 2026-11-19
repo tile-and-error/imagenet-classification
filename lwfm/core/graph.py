@@ -50,19 +50,24 @@ class ModelNode(nn.Module):
                 f"{name!r} writes the same output field twice: {self.outputs}"
             )
 
+    # Return list of output names in format <name>.<field>
     @property
     def output_names(self) -> list[Name]:
         return [f"{self.name}.{field}" for field in self.outputs]
 
     def forward(self, *input_values: Tensor) -> dict[Name, Tensor]:
+        # Execute the underlying module
         module_result = self.module(*input_values)
         if isinstance(module_result, Tensor):
             module_result = (module_result,)
+        # Extract the output values
         output_values = (
             [module_result[field] for field in self.outputs]
             if isinstance(module_result, dict)
             else module_result
         )
+        # Check if there is a mismatch between the number of outputs returned
+        #  by the underlying model vs the outputs expected
         if len(output_values) != len(self.outputs):
             raise GraphError(
                 f"{self.name!r} returned {len(output_values)} values but writes "
@@ -98,10 +103,13 @@ class ExecutionGraph(nn.Module):
         for node_name in self.node_run_order:
             # We can assume all nodes in our graph are ModelNode by construction
             node = cast(ModelNode, self.nodes[node_name])
+            # Takes a list of input names and resolves these to the actual input values.
             input_values = resolve_all(node.inputs, batch, node_outputs)
             try:
+                # Try executing the node and return a dictionary of output values
                 node_outputs |= node(*input_values)
             except Exception as error:
+                # Raise exception and display current input values at this stage
                 error.add_note(
                     f"in node {node_name!r}, reading "
                     f"{describe_values(node.inputs, input_values)}"
@@ -116,15 +124,21 @@ class ExecutionGraph(nn.Module):
         without gradients and restores the mode. The sample must be on the graph's
         device. Returns `{output name: shape}`.
         """
+        # Get Batch Tensor Size
         sample_batch_size = batch_size(preflight_sample)
+
+        # Store whether the model is in training or evaluation mode
         was_training = self.training
         self.eval()
         try:
             with torch.no_grad():
                 node_outputs = self(preflight_sample)
         finally:
+            # Prevent preflight from leaving the model in evaluation mode
+            # This only enables training mode (if set), and does not actually train
             self.train(was_training)
         for output_name, value in node_outputs.items():
+            # Check dimensions are good
             if value.ndim == 0 or value.shape[0] != sample_batch_size:
                 raise GraphError(
                     f"{output_name!r} has shape {tuple(value.shape)}; its first "
@@ -141,14 +155,19 @@ class ExecutionGraph(nn.Module):
         return cast(ModelNode, self.nodes[node_name]).module
 
 
+# Compute the order in which we should run nodes
 def compute_node_run_order(nodes: list[ModelNode]) -> list[str]:
     # Each node runs after every node it reads from (a topological sort).
     node_names = [node.name for node in nodes]
     if len(set(node_names)) < len(node_names):
         raise GraphError(f"node names must be unique: {node_names}")
+
+    # Find which nodes produce each output, and store as a dict of:
+    # output name: node name
     producer_of_output = {
         output_name: node.name for node in nodes for output_name in node.output_names
     }
+    # Find the dependencies in the graph
     upstream_nodes: dict[str, set[str]] = {}
     for node in nodes:
         upstream_nodes[node.name] = set()
@@ -159,6 +178,8 @@ def compute_node_run_order(nodes: list[ModelNode]) -> list[str]:
                 raise GraphError(
                     f"{node.name!r} reads {input_name!r}, which no node writes"
                 )
+    # Find the correct order, such that a node only appears after the outputs it
+    #  depends on have been produced
     run_order: list[str] = []
     while upstream_nodes:
         ready_nodes = sorted(
