@@ -27,6 +27,7 @@ class OutputSink(ABC):
 
 
 def _json_default(unencodable_value: object) -> object:
+    """This converts a non-standard object into a JSON representation."""
     if is_dataclass(unencodable_value) and not isinstance(unencodable_value, type):
         return asdict(unencodable_value)
     if isinstance(unencodable_value, Path):
@@ -35,6 +36,7 @@ def _json_default(unencodable_value: object) -> object:
 
 
 def to_json(event: RunEvent) -> str:
+    """Convert a RunEvent to JSON representation."""
     try:
         return json.dumps(asdict(event), default=_json_default)
     except TypeError as error:
@@ -42,6 +44,9 @@ def to_json(event: RunEvent) -> str:
 
 
 def write_json_atomic(target_path: Path, json_data: object) -> None:
+    """Write JSON to a file safely. It uses a temp directory and then OS.replace
+    to make sure readers never see a half written file. 
+    """
     temp_path = target_path.with_name(target_path.name + ".tmp")
     temp_path.write_text(json.dumps(json_data, indent=2, default=_json_default) + "\n")
     os.replace(temp_path, target_path)  # readers never see a half-written file
@@ -62,6 +67,7 @@ class LocalFileSink(OutputSink):
         events_path = self.run_dir / "events.jsonl"
         if events_path.exists():
             raise FileExistsError(f"{self.run_dir} already holds a run")
+        # Create the `run_dir` directory, or do nothing otherwise.
         self.run_dir.mkdir(parents=True, exist_ok=True)
         write_json_atomic(
             self.run_dir / "manifest.json",
@@ -73,6 +79,7 @@ class LocalFileSink(OutputSink):
         self._events_file = events_path.open("a", encoding="utf-8")
 
     def write(self, event: RunEvent) -> None:
+        """Write a RunEvent to the sink"""
         json_line = to_json(event)  # fails before anything is written
         self._events_file.write(json_line + "\n")
         self._events_file.flush()

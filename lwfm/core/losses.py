@@ -57,6 +57,7 @@ class LossComposer(nn.Module):
         self, batch: Batch, node_outputs: dict[Name, Tensor]
     ) -> tuple[Tensor, dict[str, Tensor]]:
         loss_terms = {}
+        # For each binding, get the loss value
         for binding in self.loss_bindings:
             input_values = resolve_all(binding.inputs, batch, node_outputs)
             try:
@@ -67,6 +68,7 @@ class LossComposer(nn.Module):
                     f"{describe_values(binding.inputs, input_values)}"
                 )
                 raise
+        # Calculate weighted sum
         for name, term in loss_terms.items():
             if term.ndim != 0 or not torch.isfinite(term):
                 raise ValueError(f"loss {name!r} is not a finite scalar: {term}")

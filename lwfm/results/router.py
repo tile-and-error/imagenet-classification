@@ -18,6 +18,7 @@ class OutputRouter(OutputSink):
         self.output_sinks = list(output_sinks)
 
     def write(self, event: RunEvent) -> None:
+        """Write an event to all output sinks"""
         for sink in self.output_sinks:
             try:
                 sink.write(event)
@@ -28,6 +29,7 @@ class OutputRouter(OutputSink):
                 ) from error
 
     def close(self) -> None:
+        """Close all sinks when no longer needed"""
         close_failures: list[str] = []
         for sink in self.output_sinks:  # close every sink, even after one fails
             try:
@@ -46,6 +48,12 @@ class OutputRouter(OutputSink):
         exception: BaseException | None,
         exception_traceback: TracebackType | None,
     ) -> None:
+        """
+        This method is called when used with a `with` statement.
+        It executes when Python leaves the `with` block.
+        
+        This records the final status in each of the sinks.
+        """
         final_status: RunStatus
         try:
             if exception_type is None:

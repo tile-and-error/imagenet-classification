@@ -5,6 +5,7 @@ from pathlib import Path
 import torch
 import torchvision
 
+# Get the absolute path to the project directory
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 
 
@@ -14,6 +15,8 @@ def environment(repo_dir: Path = PACKAGE_DIR) -> dict[str, object]:
     Git is read from the code's own directory, not the working directory, so the
     revision is the code that ran. Outside a git checkout the git fields are
     `None` rather than an error.
+
+    The --porcelain argument outputs the git status in a program readable format
     """
     git_sha = _git(repo_dir, "rev-parse", "HEAD")
     git_changes = None if git_sha is None else _git(repo_dir, "status", "--porcelain")

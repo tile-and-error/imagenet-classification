@@ -33,17 +33,23 @@ def resolve(value_name: Name, batch: Batch, node_outputs: dict[Name, Tensor]) ->
 def resolve_all(
     value_names: Sequence[Name], batch: Batch, node_outputs: dict[Name, Tensor]
 ) -> list[Any]:
+    """Resolves a list of names, see docs on resolve()."""
     return [resolve(name, batch, node_outputs) for name in value_names]
 
 
 def as_list(one_or_many_names: Name | Sequence[Name]) -> list[Name]:
+    """Converts the given input `one_or_many_names` to a list. 
+    For example as_list('a')=['a'], as_list(['a','b'])=['a','b']
+    """
     if isinstance(one_or_many_names, str):
         return [one_or_many_names]
     return list(one_or_many_names)
 
 
 def describe_values(value_names: Sequence[Name], values: Sequence[Any]) -> str:
-    """`"student.logits (8, 10), targets.class (8,)"`: for error notes."""
+    """Describes values for use in error notes, for example:
+    `"student.logits (8, 10), targets.class (8,)"`
+    """
     return ", ".join(
         f"{name} "
         f"{tuple(value.shape) if isinstance(value, Tensor) else type(value).__name__}"

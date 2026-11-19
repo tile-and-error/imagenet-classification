@@ -40,8 +40,10 @@ class RunEvent:
     timestamp_utc: str = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
+        # Check correct kind (datatype)
         if self.kind not in KINDS:
             raise ValueError(f"event {self.name!r}: kind {self.kind!r} not in {KINDS}")
+        # Prevent saving Tensors through RunEvents
         if isinstance(self.value, Tensor):
             if self.kind != "scalar" or self.value.numel() != 1:
                 raise TypeError(
@@ -50,5 +52,6 @@ class RunEvent:
                     "artifact event instead"
                 )
             self.value = self.value.item()
+        # Validate Status
         if self.kind == "status" and self.value not in STATUSES:
             raise ValueError(f"status {self.value!r} not in {STATUSES}")

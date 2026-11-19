@@ -46,6 +46,7 @@ class Evaluator:
             binding.metric.reset()
             binding.metric.to(device)
 
+        # Save model training state
         was_training = graph.training
         graph.eval()
         batch_count = 0
@@ -58,6 +59,7 @@ class Evaluator:
                         binding.update(batch, node_outputs)
                     batch_count += 1
         finally:
+            # Set the model training mode (this does not actually commence training)
             graph.train(was_training)
         if batch_count == 0:
             raise ValueError("data_loader yielded no batches")
@@ -65,6 +67,8 @@ class Evaluator:
         metric_values = {
             binding.name: compute_single_value(binding) for binding in metric_bindings
         }
+
+        # Write to Output Sinks
         if output_sink is not None:
             for metric_name, value in metric_values.items():
                 output_sink.write(
