@@ -69,6 +69,15 @@ class LocalFileSink(OutputSink):
             raise FileExistsError(f"{self.run_dir} already holds a run")
         # Create the `run_dir` directory, or do nothing otherwise.
         self.run_dir.mkdir(parents=True, exist_ok=True)
+
+        # Open in exclusive-create mode to ensure anything else claiming the directory
+        # isn't interrupted
+        try:
+            self._events_file = (self.run_dir / "events.jsonl").open(
+                "x", encoding="utf-8"
+            )
+        except FileExistsError:
+            raise FileExistsError(f"{self.run_dir} already holds a run") from None
         write_json_atomic(
             self.run_dir / "manifest.json",
             {**(manifest_fields or {}), "environment": environment()},
@@ -127,6 +136,7 @@ class ConsoleSink(OutputSink):
         )
         prefix = f"[{stage_and_step}] " if stage_and_step else ""
         self.output_stream.write(f"{prefix}{event.name} = {shown_value}\n")
+        self.output_stream.flush()
 
     def close(self) -> None:
         self.output_stream.flush()
