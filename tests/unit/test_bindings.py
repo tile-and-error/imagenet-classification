@@ -84,3 +84,9 @@ def test_binding_converts_one_name_to_list():
 def test_composer_needs_a_binding():
     with pytest.raises(ValueError):
         LossComposer([])
+
+
+def test_non_unique_loss_composer_fails():
+    repeated_binding = LossBinding("repeated", lambda: torch.tensor(5), [])
+    with pytest.raises(ValueError):
+        LossComposer([repeated_binding, repeated_binding])

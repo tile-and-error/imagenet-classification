@@ -1,30 +1,52 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>5. ExecutionGraph: connecting models</title>
-<link rel="stylesheet" href="assets/style.css">
-<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
-<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
-<script src="assets/vendor/hljs-highlight.min.js"></script>
-<script src="assets/vendor/hljs-python.min.js"></script>
-<script src="assets/vendor/hljs-bash.min.js"></script>
-<script src="assets/vendor/mermaid.min.js"></script>
-<script>
-  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
-</script>
-<script src="assets/nav.js" defer></script>
-</head>
-<body>
-<main>
-<header class="top"><a href="index.html">lwfm tutorial</a><span>5 / 12</span>
-<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
-<h1>5. ExecutionGraph: connecting models</h1>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>5. ExecutionGraph: connecting models</title>
+    <link rel="stylesheet" href="assets/style.css" />
+    <link
+      rel="stylesheet"
+      media="(prefers-color-scheme: light)"
+      href="assets/vendor/hljs-github.min.css"
+    />
+    <link
+      rel="stylesheet"
+      media="(prefers-color-scheme: dark)"
+      href="assets/vendor/hljs-github-dark.min.css"
+    />
+    <script src="assets/vendor/hljs-highlight.min.js"></script>
+    <script src="assets/vendor/hljs-python.min.js"></script>
+    <script src="assets/vendor/hljs-bash.min.js"></script>
+    <script src="assets/vendor/mermaid.min.js"></script>
+    <script>
+      const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: dark ? "dark" : "default",
+        securityLevel: "strict",
+      });
+    </script>
+    <script src="assets/nav.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header class="top">
+        <a href="index.html">lwfm tutorial</a><span>5 / 12</span>
+        <span
+          ><code class="t">torch</code> PyTorch &nbsp;
+          <code class="l">lwfm</code> ours</span
+        >
+      </header>
+      <h1>5. ExecutionGraph: connecting models</h1>
 
-<p class="lead">An <code class="l">ExecutionGraph</code> holds nodes and runs them in an order where each node runs after the nodes it reads from.</p>
-<pre class="code"><code class="language-python">from lwfm.core.graph import ExecutionGraph               # lwfm
+      <p class="lead">
+        An <code class="l">ExecutionGraph</code> holds nodes and runs them in an
+        order where each node runs after the nodes it reads from.
+      </p>
+      <pre
+        class="code"
+      ><code class="language-python">from lwfm.core.graph import ExecutionGraph               # lwfm
 
 probe = ModelNode(&quot;probe&quot;, nn.Linear(10, 2),             # torch: a single linear layer
                   inputs=&quot;student.logits&quot;, outputs=&quot;logits&quot;)
@@ -32,29 +54,62 @@ probe = ModelNode(&quot;probe&quot;, nn.Linear(10, 2),             # torch: a si
 pipeline = ExecutionGraph([probe, student])   # lwfm: the list order doesn&#x27;t matter
 pipeline.node_run_order                                # [&#x27;student&#x27;, &#x27;probe&#x27;]
 pipeline(batch)                               # one dict with every node&#x27;s outputs</code></pre>
-<pre class="output">{&#x27;student.logits&#x27;: [8, 10], &#x27;probe.logits&#x27;: [8, 2]}</pre>
-<p><strong>A node runs once per call, however many nodes read it.</strong> Outputs go into one dict; every reader gets the same tensor from it.</p>
-<pre class="code"><code class="language-python">shared = ExecutionGraph([
+      <pre class="output">
+{&#x27;student.logits&#x27;: [8, 10], &#x27;probe.logits&#x27;: [8, 2]}</pre
+      >
+      <p>
+        <strong>A node runs once per call, however many nodes read it.</strong>
+        Outputs go into one dict; every reader gets the same tensor from it.
+      </p>
+      <pre class="code"><code class="language-python">shared = ExecutionGraph([
     ModelNode(&quot;head_a&quot;, nn.Linear(16, 2), inputs=&quot;backbone.features&quot;, outputs=&quot;logits&quot;),
     ModelNode(&quot;head_b&quot;, nn.Linear(16, 3), inputs=&quot;backbone.features&quot;, outputs=&quot;logits&quot;),
     ModelNode(&quot;backbone&quot;, backbone, inputs=&quot;inputs.image&quot;, outputs=&quot;features&quot;),
 ], preflight_sample=batch)    # check shapes on this batch while building (below)
 shared.node_run_order       # [&#x27;backbone&#x27;, &#x27;head_a&#x27;, &#x27;head_b&#x27;]: backbone runs once, both heads reuse it</code></pre>
-<p class="muted">Nothing is kept between calls: the next <code class="l">pipeline(batch)</code> runs everything again on the new batch. Putting the <em>same</em> module object into two nodes runs it twice; that shares weights, not outputs.</p>
-<p>Mistakes fail when the graph is <em>built</em>, before any data is used:</p>
-<pre class="code"><code class="language-python">ExecutionGraph([ModelNode(&quot;probe&quot;, nn.Linear(10, 2), inputs=&quot;studnet.logits&quot;, outputs=&quot;logits&quot;)])</code></pre>
-<pre class="output">GraphError: &#x27;probe&#x27; reads &#x27;studnet.logits&#x27;, which no node writes</pre>
-<p>Wrong <em>shapes</em> only show up when data flows, so pass a <code>preflight_sample</code> batch and building the graph also runs it once on that batch (the <strong>preflight</strong> check):</p>
-<pre class="code"><code class="language-python">pipeline = ExecutionGraph([student], preflight_sample=batch)   # any batch works, even zeros
+      <p class="muted">
+        Nothing is kept between calls: the next
+        <code class="l">pipeline(batch)</code> runs everything again on the new
+        batch. Putting the <em>same</em> module object into two nodes runs it
+        twice; that shares weights, not outputs.
+      </p>
+      <p>
+        Mistakes fail when the graph is <em>built</em>, before any data is used:
+      </p>
+      <pre
+        class="code"
+      ><code class="language-python"># &quot;studnet&quot; is a deliberate typo: building fails and names it
+ExecutionGraph([ModelNode(&quot;probe&quot;, nn.Linear(10, 2), inputs=&quot;studnet.logits&quot;, outputs=&quot;logits&quot;)])</code></pre>
+      <pre class="output">
+GraphError: &#x27;probe&#x27; reads &#x27;studnet.logits&#x27;, which no node writes</pre
+      >
+      <p>
+        Wrong <em>shapes</em> only show up when data flows, so pass a
+        <code>preflight_sample</code> batch and building the graph also runs it
+        once on that batch (the <strong>preflight</strong> check):
+      </p>
+      <pre
+        class="code"
+      ><code class="language-python">pipeline = ExecutionGraph([student], preflight_sample=batch)   # any batch works, even zeros
 pipeline.preflight_output_shapes                                      # {&#x27;student.logits&#x27;: (8, 10)}, for the log
 ExecutionGraph([student])                         # no sample: no check, preflight_output_shapes is None
 
 probe = ModelNode(&quot;probe&quot;, nn.Linear(512, 2), inputs=&quot;student.logits&quot;, outputs=&quot;logits&quot;)
 ExecutionGraph([student, probe], preflight_sample=batch)    # 512 should be 10: fails while building</code></pre>
-<pre class="output">RuntimeError: mat1 and mat2 shapes cannot be multiplied (8x10 and 512x2)
-in node &#x27;probe&#x27;, reading student.logits (8, 10)</pre>
-<p class="muted">The check also fails if an output loses the batch size as its first dimension. It runs in eval mode with no gradients and leaves the graph in train mode; <code class="l">pipeline.preflight(batch)</code> re-runs it later. The error keeps PyTorch's type. The note naming the node is added in ordinary runs too, and losses and metrics add one naming themselves.</p>
-<pre class="mermaid">classDiagram
+      <pre class="output">
+RuntimeError: mat1 and mat2 shapes cannot be multiplied (8x10 and 512x2)
+in node &#x27;probe&#x27;, reading student.logits (8, 10)</pre
+      >
+      <p class="muted">
+        The check also fails if an output loses the batch size as its first
+        dimension. It runs in eval mode with no gradients and leaves the graph
+        in train mode; <code class="l">pipeline.preflight(batch)</code> re-runs
+        it later. The error keeps PyTorch's type. The note naming the node is
+        added in ordinary runs too, and losses and metrics add one naming
+        themselves.
+      </p>
+      <pre class="mermaid">
+classDiagram
     direction TB
     class Module {
         &lt;&lt;torch.nn&gt;&gt;
@@ -83,13 +138,62 @@ in node &#x27;probe&#x27;, reading student.logits (8, 10)</pre>
     Module &lt;|-- ModelNode
     Module &lt;|-- Sequential
     ExecutionGraph *-- &quot;1..*&quot; ModelNode : holds
-    ModelNode *-- &quot;1&quot; Module : holds, unchanged</pre>
-<p class="muted">Every lwfm class here <em>is</em> an <code class="t">nn.Module</code>. Hollow arrows = "is a"; diamonds = "holds".</p>
-<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">nn.ModuleDict</code> — a dict of modules that PyTorch can see. The graph stores its nodes in one.</li><li><code class="t">.parameters()  .to()  .train()  .eval()  .state_dict()</code> — all work on the graph, because it is an nn.Module. Weights are saved under keys like nodes.student.module.1.fc.weight.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">ExecutionGraph(nodes, preflight_sample=None)</code> — checks names, finds the run order, checks shapes on the sample if given (pipeline.preflight_output_shapes), then pipeline(batch) returns {name: tensor}.</li><li><code class="l">GraphError</code> — raised for a duplicate node name, a read nothing writes, a loop, or an output that loses the batch dimension.</li></ul></div></div>
-<div class="why"><strong>Why?</strong> With one node you barely need a graph, but distillation needs several models reading one batch. Building the general version now means adding a teacher later is one more list entry, not a second code path.</div>
-
-</main>
-<nav class="pager"><a rel="prev" href="04-model-node.html">← 4. ModelNode: wrapping a model</a><a rel="next" href="06-losses-metrics.html">6. Losses and metrics →</a></nav>
-<script>hljs.highlightAll();</script>
-</body>
+    ModelNode *-- &quot;1&quot; Module : holds, unchanged</pre
+      >
+      <p class="muted">
+        Every lwfm class here <em>is</em> an <code class="t">nn.Module</code>.
+        Hollow arrows = "is a"; diamonds = "holds".
+      </p>
+      <div class="parts">
+        <div class="part t">
+          <h4>From PyTorch</h4>
+          <ul>
+            <li>
+              <code class="t">nn.ModuleDict</code> — a dict of modules that
+              PyTorch can see. The graph stores its nodes in one.
+            </li>
+            <li>
+              <code class="t"
+                >.parameters() .to() .train() .eval() .state_dict()</code
+              >
+              — all work on the graph, because it is an nn.Module. Weights are
+              saved under keys like nodes.student.module.1.fc.weight.
+            </li>
+          </ul>
+        </div>
+        <div class="part l">
+          <h4>From lwfm (ours)</h4>
+          <ul>
+            <li>
+              <code class="l"
+                >ExecutionGraph(nodes, preflight_sample=None)</code
+              >
+              — checks names, finds the run order, checks shapes on the sample
+              if given (pipeline.preflight_output_shapes), then pipeline(batch)
+              returns {name: tensor}.
+            </li>
+            <li>
+              <code class="l">GraphError</code> — raised for a duplicate node
+              name, a read nothing writes, a loop, or an output that loses the
+              batch dimension.
+            </li>
+          </ul>
+        </div>
+      </div>
+      <div class="why">
+        <strong>Why?</strong> With one node you barely need a graph, but
+        distillation needs several models reading one batch. Building the
+        general version now means adding a teacher later is one more list entry,
+        not a second code path.
+      </div>
+    </main>
+    <nav class="pager">
+      <a rel="prev" href="04-model-node.html"
+        >← 4. ModelNode: wrapping a model</a
+      ><a rel="next" href="06-losses-metrics.html">6. Losses and metrics →</a>
+    </nav>
+    <script>
+      hljs.highlightAll();
+    </script>
+  </body>
 </html>

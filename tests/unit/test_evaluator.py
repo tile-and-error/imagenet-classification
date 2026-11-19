@@ -4,7 +4,7 @@ from torch import nn
 from torchmetrics.classification import MulticlassAccuracy
 
 from lwfm.core.batch import to_device
-from lwfm.core.graph import ExecutionGraph, ModelNode
+from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
 from lwfm.evaluation.evaluator import Evaluator
 from lwfm.evaluation.metrics import MetricBinding
 from lwfm.results.sinks import OutputSink
@@ -155,3 +155,18 @@ def test_to_device_moves_tensors_and_keeps_other_values():
     assert moved["inputs"]["logits"].device.type == "meta"
     assert moved["targets"]["class"].device.type == "meta"
     assert moved["meta"]["sample_id"] == ["s0", "s1"]
+
+
+def test_unknown_metric_input_fails_before_any_batch():
+    def loader():
+        raise AssertionError("no batch should be read")
+        yield
+
+    # "studnet" is a deliberate typo: it must be rejected before any batch is read
+    typo = MetricBinding(
+        "top1", MulticlassAccuracy(num_classes=6), ["studnet.logits", "targets.class"]
+    )
+    with pytest.raises(GraphError, match="studnet.logits"):
+        Evaluator().evaluate(
+            logits_graph(), loader(), [typo], device=torch.device("cpu")
+        )

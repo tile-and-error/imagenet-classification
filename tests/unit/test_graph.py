@@ -3,6 +3,7 @@ import torch
 from torch import Tensor, nn
 
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
+from lwfm.core.losses import LossBinding
 
 
 class Scale(nn.Module):
@@ -172,7 +173,7 @@ def test_deployable_model_is_the_nodes_module():
             ],
             "unique",
         ),
-        (
+        (  # "studnet" is a deliberate typo: no node writes it
             [ModelNode("a", Scale(), inputs="studnet.y", outputs="y")],
             "studnet.y",
         ),
@@ -189,3 +190,13 @@ def test_deployable_model_is_the_nodes_module():
 def test_invalid_graphs_fail_at_build_time(nodes, message):
     with pytest.raises(GraphError, match=message):
         ExecutionGraph(nodes)
+
+
+def test_check_reads_rejects_names_nothing_writes():
+    student = ModelNode("student", nn.Identity(), "inputs.image", "logits")
+    pipeline = ExecutionGraph([student])
+    pipeline.check_reads(["student.logits", "targets.class"])
+    # "studnet" is a deliberate typo: nothing writes it, so it must be rejected
+    typo = LossBinding("ce", nn.CrossEntropyLoss(), ["studnet.logits", "targets.class"])
+    with pytest.raises(GraphError, match="studnet.logits"):
+        pipeline.check_reads(typo.inputs)
