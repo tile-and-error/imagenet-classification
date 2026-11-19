@@ -51,7 +51,7 @@ class OutputRouter(OutputSink):
         """
         This method is called when used with a `with` statement.
         It executes when Python leaves the `with` block.
-        
+
         This records the final status in each of the sinks.
         """
         final_status: RunStatus

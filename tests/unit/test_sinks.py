@@ -6,7 +6,6 @@ import pytest
 import torch
 
 from lwfm.results.events import RunEvent
-from lwfm.results.manifest import environment
 from lwfm.results.sinks import ConsoleSink, LocalFileSink, OutputSink
 
 
@@ -24,7 +23,13 @@ def test_manifest_and_running_status_are_written_on_creation(tmp_path):
     LocalFileSink(tmp_path / "run", manifest_fields={"seed": 42})
     manifest = read_json(tmp_path / "run" / "manifest.json")
     assert manifest["seed"] == 42
-    assert {"python", "torch", "git_sha", "git_dirty"} <= manifest["environment"].keys()
+    assert manifest["environment"].keys() == {
+        "python",
+        "platform",
+        "torch",
+        "torchvision",
+        "cuda_device",
+    }
     assert read_json(tmp_path / "run" / "status.json")["status"] == "running"
 
 
@@ -121,13 +126,6 @@ def test_console_line_format(event, line):
     stream = io.StringIO()
     ConsoleSink(stream).write(event)
     assert stream.getvalue() == line + "\n"
-
-
-def test_environment_outside_git_has_no_sha(tmp_path):
-    env = environment(repo_dir=tmp_path)
-    assert env["git_sha"] is None
-    assert env["git_dirty"] is None
-    assert env["torch"] == torch.__version__
 
 
 def test_output_sink_is_abstract():

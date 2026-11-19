@@ -38,7 +38,7 @@ def resolve_all(
 
 
 def as_list(one_or_many_names: Name | Sequence[Name]) -> list[Name]:
-    """Converts the given input `one_or_many_names` to a list. 
+    """Converts the given input `one_or_many_names` to a list.
     For example as_list('a')=['a'], as_list(['a','b'])=['a','b']
     """
     if isinstance(one_or_many_names, str):

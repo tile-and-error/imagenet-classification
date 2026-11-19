@@ -79,7 +79,7 @@ router.write(RunEvent(&quot;artifact&quot;, &quot;fit/checkpoint&quot;, &quot;st
 <p class="muted">Sinks never receive tensors: a one-number tensor becomes a plain number, anything bigger is refused. Large data goes to its own file; the event only says where it is.</p>
 <table>
   <tr><th>File</th><th>Written</th><th>Holds</th></tr>
-  <tr><td><code>manifest.json</code></td><td>at the start</td><td>versions, machine, git revision, your settings</td></tr>
+  <tr><td><code>manifest.json</code></td><td>at the start</td><td>versions, machine, your settings</td></tr>
   <tr><td><code>status.json</code></td><td>start, then at the end</td><td>running → completed / failed (with traceback) / interrupted</td></tr>
   <tr><td><code>events.jsonl</code></td><td>every event, at once</td><td>one line per event, so a crashed run keeps its data</td></tr>
   <tr><td><code>summary.json</code></td><td>at the end</td><td>the last value of every scalar</td></tr>

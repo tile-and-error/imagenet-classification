@@ -45,7 +45,7 @@ def to_json(event: RunEvent) -> str:
 
 def write_json_atomic(target_path: Path, json_data: object) -> None:
     """Write JSON to a file safely. It uses a temp directory and then OS.replace
-    to make sure readers never see a half written file. 
+    to make sure readers never see a half written file.
     """
     temp_path = target_path.with_name(target_path.name + ".tmp")
     temp_path.write_text(json.dumps(json_data, indent=2, default=_json_default) + "\n")

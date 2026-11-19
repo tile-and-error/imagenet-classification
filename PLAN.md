@@ -35,7 +35,7 @@ This plan merges those requirements with the earlier `alternative-plan.zip` and 
 - Every prediction and metric is tied to the right unit: image, tile, slide, patient or pixel.
 - A student's measured inference cost never includes a frozen teacher or a training-only projector.
 - Low-bit speed-up claims need **real supported kernels and measured timings**. Simulated ("fake") quantisation shows accuracy only, not speed.
-- For every comparison, record input size and normalisation, splits, checkpoints, seed, git revision and numeric precision.
+- For every comparison, record input size and normalisation, splits, checkpoints, seed and numeric precision.
 - Splits must keep **patients** separate before any pathology experiment.
 
 ---
@@ -674,7 +674,7 @@ classDiagram
 |                              | `ConsoleSink(output_stream=sys.stdout)`                                                      | One line per event: `[fit step 10] train/loss/total = 0.4321`.                                                                                                 |
 |                              | `SinkError` (`RuntimeError`)                                                          | A sink failed; names the sink and the event.                                                                                                                   |
 | `lwfm/results/router.py`     | `OutputRouter(*output_sinks)`: `write(event)`, `close()`; a context manager                     | An `OutputSink` that sends every event to every sink in order.                                                                                                                      |
-| `lwfm/results/manifest.py`   | `environment()`                                                                       | Python/torch/torchvision versions, platform, CUDA device, git SHA and dirty flag (`None` outside a git checkout).                                               |
+| `lwfm/results/manifest.py`   | `environment()`                                                                       | Python/torch/torchvision versions, platform, CUDA device.                                               |
 
 **Run status.** Wrap a run in `with OutputRouter(*output_sinks) as router:`. A normal exit records `completed`; `KeyboardInterrupt` records `interrupted`; any other exception records its traceback and `failed`, then propagates. Every case closes the sinks. _Why:_ the status can't be left at `running` by a crash, and the traceback is kept (§6.4).
 
@@ -904,7 +904,7 @@ runs/
 ```
 
 - The name includes a UTC timestamp, a readable name, Slurm IDs when present, and a random suffix so parallel jobs never collide.
-- `manifest.json`: run ID, config/schema version, git SHA and dirty flag if available, Python/PyTorch/torchvision/torchmetrics versions, machine and accelerator, dataset root, manifest hashes and class map, seed, phase, precision, source checkpoints. If the code is not in a git checkout, log that rather than failing.
+- `manifest.json`: run ID, config/schema version, Python/PyTorch/torchvision/torchmetrics versions, machine and accelerator, dataset root, manifest hashes and class map, seed, phase, precision, source checkpoints.
 - Write `status.json` as `running` before the first stage; set the final status in a `finally` block; keep the traceback on failure; flush and close sinks.
 - `fit_last.pt` holds model, optimizer and counters. The separate `model_weights.pt` stops training-state size being mistaken for model size. Write checkpoints to a temporary file and rename, so a crash cannot leave a half-written file.
 - Later, every transform produces a **new referenced artifact** and records which artifact it came from.
