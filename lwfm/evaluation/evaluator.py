@@ -41,6 +41,9 @@ class Evaluator:
             raise ValueError("evaluate needs at least one MetricBinding")
         if len(set(metric_names)) != len(metric_names):
             raise ValueError(f"metric names must be unique, got {metric_names}")
+        graph.check_reads(
+            name for binding in metric_bindings for name in binding.inputs
+        )
 
         for binding in metric_bindings:
             binding.metric.reset()

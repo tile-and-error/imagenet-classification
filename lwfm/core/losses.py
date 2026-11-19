@@ -42,6 +42,11 @@ class LossComposer(nn.Module):
             raise ValueError("LossComposer needs at least one LossBinding")
         self.loss_bindings = loss_bindings
 
+        # Ensure loss names are unique
+        loss_names = [b.name for b in self.loss_bindings]
+        if len(set(loss_names)) < len(loss_names):
+            raise ValueError(f"loss names must be unique, got {loss_names}")
+
         # Register losses with weights, to appear in .parameters() and move with .to()
         # Pitfall: Assigning an nn.Module to an attribute of a module registers it,
         # but mutating it inside a plain list or dataclass doesn't. After

@@ -12,8 +12,9 @@ one (the student), so the student approaches the teacher's quality at a fraction
 inference cost. The stages connect as follows.
 
 - **Data inputs** supply labelled images for a task.
-- **Preprocessing** turns them into model-ready batches (resizing, cropping, augmentation),
-  identically for teacher and student so both see the same input.
+- **Preprocessing** turns them into model-ready batches (resizing, cropping, augmentation).
+  Teacher and student see the same view, unless the recipe gives them different views on
+  purpose (e.g. DINOv2-style multi-crop: the teacher sees global crops, the student all).
 - **Teacher(s)** are pretrained and frozen; they only produce the targets the student
   learns from. A run may use more than one teacher at once, and the student learns from
   their combined signal.

@@ -24,6 +24,7 @@ def test_resolves_node_outputs(batch):
     assert resolve("student.logits", batch, {"student.logits": logits}) is logits
 
 
+# Deliberate typos ("imgae", "studnet"): each must appear in the error message.
 @pytest.mark.parametrize(
     "name", ["inputs.imgae", "studnet.logits", "inputs", "batch.inputs.image"]
 )

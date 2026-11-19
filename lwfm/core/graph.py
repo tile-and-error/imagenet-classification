@@ -1,4 +1,5 @@
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from contextlib import nullcontext
 from typing import cast
 
 import torch
@@ -35,6 +36,7 @@ class ModelNode(nn.Module):
         module: nn.Module,
         inputs: Name | Sequence[Name],
         outputs: str | Sequence[str],
+        frozen: bool = False,
     ):
         super().__init__()
         if "." in name or name in BATCH_GROUPS:
@@ -45,6 +47,9 @@ class ModelNode(nn.Module):
         self.module = module
         self.inputs = as_list(inputs)
         self.outputs = as_list(outputs)
+        self.frozen = frozen
+        if frozen:
+            module.requires_grad_(False).eval()
         if len(set(self.outputs)) < len(self.outputs):
             raise GraphError(
                 f"{name!r} writes the same output field twice: {self.outputs}"
@@ -55,25 +60,31 @@ class ModelNode(nn.Module):
     def output_names(self) -> list[Name]:
         return [f"{self.name}.{field}" for field in self.outputs]
 
+    def train(self, mode: bool = True) -> "ModelNode":
+        """Override train so ExecutionGraph.train() can't unfreeze model."""
+        return super().train(mode and not self.frozen)
+
     def forward(self, *input_values: Tensor) -> dict[Name, Tensor]:
-        # Execute the underlying module
-        module_result = self.module(*input_values)
-        if isinstance(module_result, Tensor):
-            module_result = (module_result,)
-        # Extract the output values
-        output_values = (
-            [module_result[field] for field in self.outputs]
-            if isinstance(module_result, dict)
-            else module_result
-        )
-        # Check if there is a mismatch between the number of outputs returned
-        #  by the underlying model vs the outputs expected
-        if len(output_values) != len(self.outputs):
-            raise GraphError(
-                f"{self.name!r} returned {len(output_values)} values but writes "
-                f"{self.outputs}"
+        # Don't bother calculating gradients if frozen
+        with torch.no_grad() if self.frozen else nullcontext():
+            # Execute the underlying module
+            module_result = self.module(*input_values)
+            if isinstance(module_result, Tensor):
+                module_result = (module_result,)
+            # Extract the output values
+            output_values = (
+                [module_result[field] for field in self.outputs]
+                if isinstance(module_result, dict)
+                else module_result
             )
-        return dict(zip(self.output_names, output_values, strict=True))
+            # Check if there is a mismatch between the number of outputs returned
+            #  by the underlying model vs the outputs expected
+            if len(output_values) != len(self.outputs):
+                raise GraphError(
+                    f"{self.name!r} returned {len(output_values)} values but writes "
+                    f"{self.outputs}"
+                )
+            return dict(zip(self.output_names, output_values, strict=True))
 
 
 class ExecutionGraph(nn.Module):
@@ -145,6 +156,28 @@ class ExecutionGraph(nn.Module):
                     f"dimension should be the batch size, {sample_batch_size}"
                 )
         return {name: tuple(value.shape) for name, value in node_outputs.items()}
+
+    def check_reads(self, value_names: Iterable[Name]) -> None:
+        """Raises `GraphError` if a name is neither a node output nor in a batch
+        group, so a typo in a loss or metric fails before any batch runs. A typo
+        inside a batch group (`targets.clas`) is only caught when it is read.
+        """
+        node_output_names = {
+            output_name
+            for node in self.nodes.values()
+            for output_name in cast(ModelNode, node).output_names
+        }
+        unknown_names = [
+            name
+            for name in value_names
+            if name not in node_output_names
+            and name.partition(".")[0] not in BATCH_GROUPS
+        ]
+        if unknown_names:
+            raise GraphError(
+                f"nothing writes {unknown_names}; node outputs: "
+                f"{sorted(node_output_names)}"
+            )
 
     def deployable_model(self, node_name: str) -> nn.Module:
         """Return the node's module: a plain `nn.Module`, sharing the graph's weights.
