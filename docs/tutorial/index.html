@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lwfm: how the framework works</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><a href="index.html">lwfm tutorial</a><span></span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>lwfm: how the framework works</h1>
+
+<p class="lead">A short tour for anyone joining the project: the ideas behind the framework, how its pieces fit together, how it sits on top of PyTorch, and where to add your own work.</p>
+
+<div class="legend">
+  <p><strong>How to read these slides.</strong> Everything is colour-coded by where it comes from:</p>
+  <p><code class="t">nn.Module</code> orange = <strong>PyTorch</strong> (or torchvision / torchmetrics). You already know these, or can look them up in the PyTorch docs.</p>
+  <p><code class="l">ModelNode</code> blue = <strong>lwfm</strong>, our framework. Defined in this repo, under <code>lwfm/</code>.</p>
+  <p>In code, comments start with <code># torch:</code> or <code># lwfm:</code> for the same reason.</p>
+</div>
+
+<ol class="toc">
+  <li><a href="01-idea.html">The idea</a></li>
+  <li><a href="02-pipeline.html">Think of a pipeline as objects</a></li>
+  <li><a href="03-batch-names.html">Batches and names</a></li>
+  <li><a href="04-model-node.html">ModelNode: wrapping a model</a></li>
+  <li><a href="05-graph.html">ExecutionGraph: connecting models</a></li>
+  <li><a href="06-losses-metrics.html">Losses and metrics</a></li>
+  <li><a href="07-evaluate.html">Evaluating a model</a></li>
+  <li><a href="08-train-vs-infer.html">Training vs inference</a></li>
+  <li><a href="09-results.html">Recording results</a></li>
+  <li><a href="10-interfaces.html">Where to extend</a></li>
+  <li><a href="11-design.html">Design decisions</a></li>
+  <li><a href="12-contributing.html">Getting started</a></li>
+</ol>
+<p class="muted">Use ← and → to move between slides. Every code snippet here was run against the current code.</p>
+
+</main>
+<nav class="pager"><span class="off">.</span><a rel="next" href="01-idea.html">1. The idea →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

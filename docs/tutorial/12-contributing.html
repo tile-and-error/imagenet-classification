@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12. Getting started</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><a href="index.html">lwfm tutorial</a><span>12 / 12</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>12. Getting started</h1>
+
+<h3>Set up and check everything works</h3>
+<pre class="code"><code class="language-bash">uv sync --extra examples --inexact      # install, plus the notebook kernel
+uv run pytest -q                        # all tests (CPU only, a few seconds)
+uv run ruff format . && uv run ruff check .
+uv run --with pyright pyright lwfm      # type check</code></pre>
+
+<h3>Where things are</h3>
+<table>
+  <tr><td><code>PLAN.md</code></td><td>The source of truth: what to build, in which order, and why.</td></tr>
+  <tr><td><code>lwfm/core/</code></td><td>Names, <code class="l">ModelNode</code>, <code class="l">ExecutionGraph</code>, losses, <code class="l">to_device</code>.</td></tr>
+  <tr><td><code>lwfm/models/</code>, <code>lwfm/evaluation/</code>, <code>lwfm/results/</code></td><td>model builders (coming); <code class="l">MetricBinding</code>, <code class="l">Evaluator</code>; events, router, sinks.</td></tr>
+  <tr><td><code>examples/building_blocks.ipynb</code></td><td>Everything on these slides, runnable.</td></tr>
+  <tr><td><code>tests/unit/</code></td><td>One test file per module.</td></tr>
+</table>
+
+<h3>How to contribute a piece</h3>
+<ol>
+  <li>Find its place on <a href="10-interfaces.html">slide 10</a>. Don't add a new mechanism if an existing one fits.</li>
+  <li>Write it as a plain PyTorch module or function, or a subclass of the matching lwfm interface.</li>
+  <li>Add tests: one that it works, one that it fails clearly when misused.</li>
+  <li>Add a runnable example to the notebook. If it isn't runnable yet, it stays in <code>PLAN.md</code>.</li>
+  <li>Check the existing examples and tests still pass unchanged.</li>
+</ol>
+
+<h3>What's done, what's next (Phase 1)</h3>
+<table>
+  <tr><td class="ok">done</td><td>Graph building blocks and the preflight shape check, losses, metric bindings and the evaluator (top-1/top-5), events and sinks.</td></tr>
+  <tr><td class="todo">next</td><td>Data modules (fake data, ImageFolder, fixed splits), <code class="l">Trainer</code>, benchmarks, checkpoints, stages and recipe, the <code>python -m lwfm.run</code> command.</td></tr>
+</table>
+<p class="muted">Rule from the plan: no distillation or compression code until every Phase 1 test passes.</p>
+
+</main>
+<nav class="pager"><a rel="prev" href="11-design.html">← 11. Design decisions</a><span class="off">.</span></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

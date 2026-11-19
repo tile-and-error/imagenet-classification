@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11. Design decisions</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><a href="index.html">lwfm tutorial</a><span>11 / 12</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>11. Design decisions</h1>
+
+<table>
+  <tr><th>Decision</th><th>Why</th></tr>
+  <tr><td>Everything you train or run is a plain <code class="t">nn.Module</code>.</td><td>Works with all PyTorch tools, and with TIAToolbox later, without unwrapping.</td></tr>
+  <tr><td><code class="l">ModelNode</code> wraps models; it never subclasses them.</td><td>Any model drops in unchanged: torchvision, timm, your own.</td></tr>
+  <tr><td>Straight chains use <code class="t">nn.Sequential</code>; the graph is only for branches.</td><td>PyTorch already does chains well. We only build what's missing.</td></tr>
+  <tr><td>Values are found by name: <code>inputs.image</code>, <code>student.logits</code>.</td><td>The wiring is visible in one place, can go in a config file, and typos fail with the bad name.</td></tr>
+  <tr><td>Values go into models and losses <strong>by position</strong>.</td><td>No need to know a model's argument names. Losses and metrics already take (prediction, target) in order.</td></tr>
+  <tr><td>A node only writes under its own name.</td><td>Two nodes can't clash, and the node name is typed once.</td></tr>
+  <tr><td>Building the graph checks its wiring, then runs it once on a tiny batch to check shapes.</td><td>Mistakes fail in a second, not after an hour of training, and the error names the node.</td></tr>
+  <tr><td>Preprocessing is part of the model.</td><td>The shipped model can't forget it or apply it twice.</td></tr>
+  <tr><td><code class="l">deployable_model</code> returns one <code class="t">nn.Module</code>, and you must name the node.</td><td>We measure and ship the student alone; the graph doesn't guess which node that is.</td></tr>
+  <tr><td>A node runs once per <code class="l">pipeline(batch)</code>; readers share its output.</td><td>Two heads on one backbone cost one backbone pass.</td></tr>
+  <tr><td>The <code class="l">Evaluator</code> computes each metric once over all batches, and restores the graph's mode.</td><td>Results don't depend on batch size, and validation during training leaves training mode on.</td></tr>
+  <tr><td>Results go through sinks; nothing reads back from them.</td><td>Logging can't change training, and new destinations need no training-code changes.</td></tr>
+  <tr><td>Interfaces are abstract base classes with no shared code.</td><td>Missing methods fail at creation; changing an interface can't silently change existing implementations.</td></tr>
+  <tr><td>A batch is a plain dict.</td><td><code class="t">DataLoader</code>, saving and device moves already support it.</td></tr>
+</table>
+
+</main>
+<nav class="pager"><a rel="prev" href="10-interfaces.html">← 10. Where to extend</a><a rel="next" href="12-contributing.html">12. Getting started →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>
