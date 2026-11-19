@@ -34,7 +34,7 @@
   <tr><td>Building the graph checks its wiring, then runs it once on a tiny batch to check shapes.</td><td>Mistakes fail in a second, not after an hour of training, and the error names the node.</td></tr>
   <tr><td>Preprocessing is part of the model.</td><td>The shipped model can't forget it or apply it twice.</td></tr>
   <tr><td><code class="l">deployable_model</code> returns one <code class="t">nn.Module</code>, and you must name the node.</td><td>We measure and ship the student alone; the graph doesn't guess which node that is.</td></tr>
-  <tr><td>A node runs once per <code class="l">graph(batch)</code>; readers share its output.</td><td>Two heads on one backbone cost one backbone pass.</td></tr>
+  <tr><td>A node runs once per <code class="l">pipeline(batch)</code>; readers share its output.</td><td>Two heads on one backbone cost one backbone pass.</td></tr>
   <tr><td>The <code class="l">Evaluator</code> computes each metric once over all batches, and restores the graph's mode.</td><td>Results don't depend on batch size, and validation during training leaves training mode on.</td></tr>
   <tr><td>Results go through sinks; nothing reads back from them.</td><td>Logging can't change training, and new destinations need no training-code changes.</td></tr>
   <tr><td>Interfaces are abstract base classes with no shared code.</td><td>Missing methods fail at creation; changing an interface can't silently change existing implementations.</td></tr>

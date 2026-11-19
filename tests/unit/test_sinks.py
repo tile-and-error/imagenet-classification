@@ -1,10 +1,10 @@
 import io
 import json
+from dataclasses import dataclass
 
 import pytest
 import torch
 
-from lwfm.core.types import ArtifactRef
 from lwfm.results.events import RunEvent
 from lwfm.results.manifest import environment
 from lwfm.results.sinks import ConsoleSink, LocalFileSink, OutputSink
@@ -39,11 +39,16 @@ def test_events_are_on_disk_before_close(tmp_path):
     assert (event["stage"], event["step"]) == ("fit", 1)
 
 
-def test_artifact_ref_round_trips(tmp_path):
-    ref = ArtifactRef("torch_checkpoint", "artifacts/fit_last.pt", "fit")
+def test_dataclass_event_value_round_trips(tmp_path):
+    @dataclass(frozen=True)
+    class Reference:
+        kind: str
+        path: str
+
+    reference = Reference("torch_checkpoint", "artifacts/fit_last.pt")
     sink = LocalFileSink(tmp_path)
-    sink.write(RunEvent("artifact", "fit/checkpoint", ref))
-    assert ArtifactRef(**read_events(tmp_path)[0]["value"]) == ref
+    sink.write(RunEvent("artifact", "fit/checkpoint", reference))
+    assert Reference(**read_events(tmp_path)[0]["value"]) == reference
 
 
 def test_summary_holds_last_value_of_each_scalar(tmp_path):

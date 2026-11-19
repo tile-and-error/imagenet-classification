@@ -31,11 +31,11 @@ loss_fn = LossComposer([                                  # lwfm: adds up all it
     LossBinding(&quot;ce&quot;, nn.CrossEntropyLoss(),              # torch: the loss, unchanged
                 [&quot;student.logits&quot;, &quot;targets.class&quot;]),     # lwfm: CrossEntropyLoss(input, target)
 ])
-optimizer = torch.optim.SGD(graph.parameters(), lr=0.1)   # torch
+optimizer = torch.optim.SGD(pipeline.parameters(), lr=0.1)   # torch
 
-graph.train()                                     # torch: training mode
+pipeline.train()                                     # torch: training mode
 for step in range(20):
-    total, terms = loss_fn(batch, graph(batch))   # lwfm: total, and each term for logging
+    total, terms = loss_fn(batch, pipeline(batch))   # lwfm: total, and each term for logging
     optimizer.zero_grad()                         # torch
     total.backward()                              # torch: compute gradients
     optimizer.step()                              # torch: update weights</code></pre>
@@ -48,7 +48,7 @@ top1 = MetricBinding(
     MulticlassAccuracy(num_classes=10, average=&quot;micro&quot;),     # torchmetrics: unchanged
     [&quot;student.logits&quot;, &quot;targets.class&quot;],                     # lwfm: update(preds, target)
 )
-top1.update(batch, graph(batch))   # lwfm: looks the values up, calls metric.update(preds, target)
+top1.update(batch, pipeline(batch))   # lwfm: looks the values up, calls metric.update(preds, target)
 top1.metric.compute()              # torchmetrics: accuracy over every sample seen so far</code></pre>
 <div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">nn.CrossEntropyLoss</code> — a standard loss: (input, target) → one number.</li><li><code class="t">total.backward()</code> — PyTorch's autograd works out every weight's gradient.</li><li><code class="t">torch.optim.SGD</code> — updates the weights from those gradients.</li><li><code class="t">torchmetrics.Metric</code> — a metric that keeps running totals: reset(), update(preds, target) per batch, compute() at the end. average="micro" counts every sample equally.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">LossBinding(name, loss, inputs, weight=1.0)</code> — any loss: a torch loss, your own nn.Module, or a plain function.</li><li><code class="l">LossComposer(bindings)</code> — returns total = Σ weight × loss, plus each loss detached (no gradient) for logging. A NaN or non-scalar loss raises an error naming it.</li><li><code class="l">MetricBinding(name, metric, inputs)</code> — update() looks values up by name and passes them in order. Resetting and computing is the Evaluator's job (next slide).</li></ul></div></div>
 <div class="why"><strong>Why?</strong> Adding a distillation loss later is one more LossBinding that reads "teacher.logits". No loss reads a hidden shared object, so each one can be tested on its own, and a wrong name fails with that name in the message.</div>

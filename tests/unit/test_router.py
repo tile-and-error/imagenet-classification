@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from lwfm.results.events import EventSink, RunEvent
+from lwfm.results.events import RunEvent
 from lwfm.results.router import OutputRouter
 from lwfm.results.sinks import LocalFileSink, OutputSink, SinkError
 
@@ -34,13 +34,13 @@ def statuses(sink):
     return [e.value for e in sink.events if e.kind == "status"]
 
 
-def test_router_is_an_event_sink_and_broadcasts_in_order():
+def test_router_is_an_output_sink_and_broadcasts_in_order():
     log = []
     first, second = ListSink(log), ListSink(log)
-    router = OutputRouter([first, second])
-    assert isinstance(router, EventSink)
-    router.emit(RunEvent("scalar", "a", 1.0))
-    router.emit(RunEvent("scalar", "b", 2.0))
+    router = OutputRouter(first, second)
+    assert isinstance(router, OutputSink)
+    router.write(RunEvent("scalar", "a", 1.0))
+    router.write(RunEvent("scalar", "b", 2.0))
     assert log == [(first, "a"), (second, "a"), (first, "b"), (second, "b")]
     router.close()
     assert first.closed and second.closed
@@ -48,15 +48,15 @@ def test_router_is_an_event_sink_and_broadcasts_in_order():
 
 def test_normal_exit_records_completed_and_closes():
     sink = ListSink()
-    with OutputRouter([sink]) as router:
-        router.emit(RunEvent("scalar", "train/loss/total", 1.0))
+    with OutputRouter(sink) as router:
+        router.write(RunEvent("scalar", "train/loss/total", 1.0))
     assert statuses(sink) == ["completed"]
     assert sink.closed
 
 
 def test_exception_records_traceback_and_failed_then_propagates():
     sink = ListSink()
-    with pytest.raises(RuntimeError, match="boom"), OutputRouter([sink]):
+    with pytest.raises(RuntimeError, match="boom"), OutputRouter(sink):
         raise RuntimeError("boom")
     (message,) = [e for e in sink.events if e.kind == "message"]
     assert message.name == "traceback"
@@ -67,21 +67,21 @@ def test_exception_records_traceback_and_failed_then_propagates():
 
 def test_keyboard_interrupt_records_interrupted():
     sink = ListSink()
-    with pytest.raises(KeyboardInterrupt), OutputRouter([sink]):
+    with pytest.raises(KeyboardInterrupt), OutputRouter(sink):
         raise KeyboardInterrupt
     assert statuses(sink) == ["interrupted"]
     assert sink.closed
 
 
 def test_failing_sink_raises_sink_error_naming_sink_and_event():
-    router = OutputRouter([BrokenSink()])
+    router = OutputRouter(BrokenSink())
     with pytest.raises(SinkError, match="BrokenSink.*'train/loss/total'.*disk full"):
-        router.emit(RunEvent("scalar", "train/loss/total", 1.0))
+        router.write(RunEvent("scalar", "train/loss/total", 1.0))
 
 
 def test_run_directory_after_a_failed_run(tmp_path):
-    with pytest.raises(ValueError), OutputRouter([LocalFileSink(tmp_path)]) as router:
-        router.emit(RunEvent("scalar", "train/loss/total", 1.0, step=0))
+    with pytest.raises(ValueError), OutputRouter(LocalFileSink(tmp_path)) as router:
+        router.write(RunEvent("scalar", "train/loss/total", 1.0, step=0))
         raise ValueError("loss is nan")
     status = json.loads((tmp_path / "status.json").read_text())
     assert status["status"] == "failed"

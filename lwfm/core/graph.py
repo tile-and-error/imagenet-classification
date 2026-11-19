@@ -20,14 +20,13 @@ class GraphError(ValueError):
 class ModelNode(nn.Module):
     """Wraps an unchanged `nn.Module` so the graph can feed it and read its outputs.
 
-    `inputs` lists the values passed to `module.forward`, in argument order,
-    e.g. `"inputs.image"` or `["a.y", "b.y"]`. `outputs` names what the
-    module returns: a Tensor gets one field, a tuple one field per item in order,
-    and a dict keeps only the listed keys. Each is stored under the node's name,
-    so `ModelNode("student", ..., outputs="logits")` produces the value
-    `"student.logits"` (listed in `output_names`). Build straight chains, such as
-    preprocessing then a model, with plain torch:
-    `nn.Sequential(v2.Resize(size), v2.Normalize(mean, std), resnet18())`.
+    `inputs` names the values passed to the module's `forward`, in order.
+    `outputs` names what it returns, one name per returned item, published as
+    `<node name>.<output>`:
+
+        ModelNode("student", resnet18(), inputs="inputs.image", outputs="logits")
+
+    reads `batch["inputs"]["image"]` and produces `"student.logits"`.
     """
 
     def __init__(
@@ -97,6 +96,7 @@ class ExecutionGraph(nn.Module):
     def forward(self, batch: Batch) -> dict[Name, Tensor]:
         node_outputs: dict[Name, Tensor] = {}
         for node_name in self.node_run_order:
+            # We can assume all nodes in our graph are ModelNode by construction
             node = cast(ModelNode, self.nodes[node_name])
             input_values = resolve_all(node.inputs, batch, node_outputs)
             try:

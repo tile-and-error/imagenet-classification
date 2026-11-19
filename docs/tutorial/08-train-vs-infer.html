@@ -24,7 +24,7 @@
 <h1>8. Training vs inference</h1>
 
 <p class="lead">Training uses the whole framework. Inference uses only the trained model, pulled out as a plain <code class="t">nn.Module</code>.</p>
-<pre class="code"><code class="language-python">model = graph.deployable_model(&quot;student&quot;)        # lwfm: returns the node&#x27;s module itself
+<pre class="code"><code class="language-python">model = pipeline.deployable_model(&quot;student&quot;)        # lwfm: returns the node&#x27;s module itself
 model.eval()                                     # torch: switch layers to inference behaviour
 torch.save(model.state_dict(), &quot;weights.pt&quot;)     # torch: save only the weights
 
@@ -34,9 +34,9 @@ with torch.inference_mode():                     # torch: no gradient bookkeepin
 <table>
   <tr><th></th><th>Training</th><th>Inference</th></tr>
   <tr><td>Input</td><td>batch dict with inputs <em>and</em> targets</td><td>a plain image tensor</td></tr>
-  <tr><td>Model</td><td>the whole <code class="l">ExecutionGraph</code> (student, later teachers)</td><td><code class="l">graph.deployable_model(&quot;student&quot;)</code>: one <code class="t">nn.Module</code></td></tr>
+  <tr><td>Model</td><td>the whole <code class="l">ExecutionGraph</code> (student, later teachers)</td><td><code class="l">pipeline.deployable_model(&quot;student&quot;)</code>: one <code class="t">nn.Module</code></td></tr>
   <tr><td>Uses names?</td><td>yes: nodes, losses, metrics are wired by name</td><td>no: just <code class="t">model(image)</code></td></tr>
-  <tr><td>Mode</td><td><code class="t">graph.train()</code>, gradients on</td><td><code class="t">model.eval()</code>, <code class="t">torch.inference_mode()</code></td></tr>
+  <tr><td>Mode</td><td><code class="t">pipeline.train()</code>, gradients on</td><td><code class="t">model.eval()</code>, <code class="t">torch.inference_mode()</code></td></tr>
 </table>
 <div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">.train() / .eval()</code> — switch layers like dropout and batch-norm between training and inference behaviour.</li><li><code class="t">state_dict() / torch.save</code> — the model's weights as a dict, saved to a file.</li><li><code class="t">torch.inference_mode()</code> — runs faster and uses less memory by not tracking gradients.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">deployable_model(node_name)</code> — returns that node's module, sharing weights with the graph (no copy). You must name the node: the graph doesn't know which one is "the student".</li></ul></div></div>
 <div class="why"><strong>Why?</strong> The thing we measure and ship must be the student alone: no teachers, no losses, no framework. Because it's a plain nn.Module with its preprocessing inside, it can be benchmarked fairly, reloaded, or wrapped for TIAToolbox.</div>

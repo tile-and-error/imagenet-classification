@@ -1,12 +1,11 @@
 import traceback
-from collections.abc import Iterable
 from types import TracebackType
 
-from lwfm.results.events import EventSink, RunEvent, RunStatus
+from lwfm.results.events import RunEvent, RunStatus
 from lwfm.results.sinks import OutputSink, SinkError
 
 
-class OutputRouter(EventSink):
+class OutputRouter(OutputSink):
     """Sends every event to every sink, in order, and manages the run's status.
 
     Use it as a context manager around a run: a normal exit records `completed`,
@@ -15,10 +14,10 @@ class OutputRouter(EventSink):
     sinks. A sink that fails raises `SinkError` naming the sink and the event.
     """
 
-    def __init__(self, output_sinks: Iterable[OutputSink]):
+    def __init__(self, *output_sinks: OutputSink):
         self.output_sinks = list(output_sinks)
 
-    def emit(self, event: RunEvent) -> None:
+    def write(self, event: RunEvent) -> None:
         for sink in self.output_sinks:
             try:
                 sink.write(event)
@@ -60,7 +59,7 @@ class OutputRouter(EventSink):
                         exception_type, exception, exception_traceback
                     )
                 )
-                self.emit(RunEvent("message", "traceback", traceback_text))
-            self.emit(RunEvent("status", "status", final_status))
+                self.write(RunEvent("message", "traceback", traceback_text))
+            self.write(RunEvent("status", "status", final_status))
         finally:
             self.close()

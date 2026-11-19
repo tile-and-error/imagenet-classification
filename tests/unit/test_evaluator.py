@@ -7,7 +7,7 @@ from lwfm.core.batch import to_device
 from lwfm.core.graph import ExecutionGraph, ModelNode
 from lwfm.evaluation.evaluator import Evaluator
 from lwfm.evaluation.metrics import MetricBinding
-from lwfm.results.events import EventSink
+from lwfm.results.sinks import OutputSink
 
 CPU = torch.device("cpu")
 READS = ["student.logits", "targets.class"]
@@ -48,22 +48,25 @@ def top_k(k):
     )
 
 
-class ListSink(EventSink):
+class ListSink(OutputSink):
     def __init__(self):
         self.events = []
 
-    def emit(self, event):
+    def write(self, event):
         self.events.append(event)
+
+    def close(self):
+        pass
 
 
 class Probe(nn.Module):
     def __init__(self):
         super().__init__()
         self.linear = nn.Linear(6, 6)
-        self.seen = []
+        self.seen_modes = []
 
     def forward(self, x):
-        self.seen.append((self.training, torch.is_inference_mode_enabled()))
+        self.seen_modes.append((self.training, torch.is_inference_mode_enabled()))
         return self.linear(x)
 
 
@@ -85,11 +88,11 @@ def test_metric_state_resets_between_runs():
 def test_runs_in_eval_and_inference_mode_and_changes_no_weights():
     probe = Probe()
     graph = logits_graph(probe)
-    probe.seen.clear()  # drop the build-time shape check
+    probe.seen_modes.clear()  # drop the build-time shape check
     before = {k: v.clone() for k, v in graph.state_dict().items()}
     first = Evaluator().evaluate(graph, LOADER, [top_k(1)], device=CPU)
     second = Evaluator().evaluate(graph, LOADER, [top_k(1)], device=CPU)
-    assert set(probe.seen) == {(False, True)}
+    assert set(probe.seen_modes) == {(False, True)}
     assert graph.training  # mode restored
     assert first == second
     for k, v in graph.state_dict().items():
@@ -118,7 +121,7 @@ def test_values_are_emitted_as_eval_split_name():
         [top_k(1), top_k(5)],
         device=CPU,
         split_name="test",
-        event_sink=sink,
+        output_sink=sink,
         training_step=7,
     )
     assert [(e.kind, e.name, e.value, e.step) for e in sink.events] == [

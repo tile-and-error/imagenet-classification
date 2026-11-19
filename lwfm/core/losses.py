@@ -1,6 +1,5 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import cast
 
 import torch
 from torch import Tensor, nn
@@ -42,7 +41,12 @@ class LossComposer(nn.Module):
         if not loss_bindings:
             raise ValueError("LossComposer needs at least one LossBinding")
         self.loss_bindings = loss_bindings
-        # Registered: a loss with weights appears in .parameters() and moves with .to().
+
+        # Register losses with weights, to appear in .parameters() and move with .to()
+        # Pitfall: Assigning an nn.Module to an attribute of a module registers it,
+        # but mutating it inside a plain list or dataclass doesn't. After
+        # composer.loss_bindings[0].loss = other, other isn't registered. To swap a
+        # loss, build a new LossComposer.
         self.loss_modules = nn.ModuleList(
             binding.loss
             for binding in loss_bindings
@@ -66,11 +70,10 @@ class LossComposer(nn.Module):
         for name, term in loss_terms.items():
             if term.ndim != 0 or not torch.isfinite(term):
                 raise ValueError(f"loss {name!r} is not a finite scalar: {term}")
-        total_loss = cast(
-            Tensor,
-            sum(
+        total_loss = torch.stack(
+            [
                 binding.weight * loss_terms[binding.name]
                 for binding in self.loss_bindings
-            ),
-        )
+            ]
+        ).sum()
         return total_loss, {name: term.detach() for name, term in loss_terms.items()}

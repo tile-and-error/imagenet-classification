@@ -16,6 +16,10 @@ class UnknownNameError(KeyError):
 
 
 def resolve(value_name: Name, batch: Batch, node_outputs: dict[Name, Tensor]) -> Any:
+    """Look up a name: a node output (`student.logits`) first, else a batch value
+    (`targets.class`, where the part before the first `.` is one of `BATCH_GROUPS`).
+    Raises `UnknownNameError` if it is neither.
+    """
     if value_name in node_outputs:
         return node_outputs[value_name]
     group, _, key = value_name.partition(".")

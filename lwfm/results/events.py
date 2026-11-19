@@ -1,10 +1,16 @@
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal, get_args
 
 from torch import Tensor
 
+# What each kind of event carries. Only `scalar` and `status` values are checked in
+# `RunEvent.__post_init__`; the others are stored as given.
+#   scalar    one number per step: `train/loss/total`, `eval/val/top1`
+#   table     rows of values, e.g. a per-class accuracy table (not emitted yet)
+#   artifact  the path of a file the run saved, e.g. a checkpoint `student.pt`
+#   status    a run state change (see `RunStatus`), sent by `OutputRouter` on exit
+#   message   free text such as a note or the traceback of a failed run
 type EventKind = Literal["scalar", "table", "artifact", "status", "message"]
 type RunStatus = Literal["running", "completed", "failed", "interrupted"]
 
@@ -23,7 +29,7 @@ class RunEvent:
     Names follow `train/loss/<binding>`, `train/loss/total` and
     `eval/<split>/<metric>`. A scalar may be given as a one-element tensor (as
     `LossComposer` returns); it is stored as a Python number. Other tensors are
-    refused: save them to a file and emit an `artifact` event with an `ArtifactRef`.
+    refused: save them to a file and emit an `artifact` event with its path.
     """
 
     kind: EventKind
@@ -46,12 +52,3 @@ class RunEvent:
             self.value = self.value.item()
         if self.kind == "status" and self.value not in STATUSES:
             raise ValueError(f"status {self.value!r} not in {STATUSES}")
-
-
-class EventSink(ABC):
-    """Anything that accepts events. Computing code (trainer, evaluator) emits to
-    this and never knows where results are stored; `OutputRouter` implements it.
-    """
-
-    @abstractmethod
-    def emit(self, event: RunEvent) -> None: ...

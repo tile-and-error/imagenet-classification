@@ -7,7 +7,8 @@ from lwfm.core.batch import to_device
 from lwfm.core.graph import ExecutionGraph
 from lwfm.core.types import Batch
 from lwfm.evaluation.metrics import MetricBinding
-from lwfm.results.events import EventSink, RunEvent
+from lwfm.results.events import RunEvent
+from lwfm.results.sinks import OutputSink
 
 
 @dataclass(frozen=True)
@@ -20,7 +21,7 @@ class Evaluator:
     under `torch.inference_mode()`, update every metric per batch, compute once at
     the end. The graph's train/eval mode is restored afterwards.
 
-    With an `event_sink`, each value is emitted as the scalar
+    With an `output_sink`, each value is emitted as the scalar
     `eval/<split_name>/<metric name>` at `training_step`.
     """
 
@@ -32,7 +33,7 @@ class Evaluator:
         *,
         device: torch.device,
         split_name: str = "val",
-        event_sink: EventSink | None = None,
+        output_sink: OutputSink | None = None,
         training_step: int | None = None,
     ) -> EvaluationResult:
         metric_names = [binding.name for binding in metric_bindings]
@@ -64,9 +65,9 @@ class Evaluator:
         metric_values = {
             binding.name: compute_single_value(binding) for binding in metric_bindings
         }
-        if event_sink is not None:
+        if output_sink is not None:
             for metric_name, value in metric_values.items():
-                event_sink.emit(
+                output_sink.write(
                     RunEvent(
                         "scalar",
                         f"eval/{split_name}/{metric_name}",

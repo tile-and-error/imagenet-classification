@@ -315,7 +315,7 @@ sequenceDiagram
 |                              | `graph.deployable_model(node_name) -> nn.Module`                                     | The named node's module itself, sharing weights. No default: the graph doesn't know which node is the student.         |
 | `lwfm/core/losses.py`        | `LossBinding(name, loss, inputs, weight=1.0)`; `LossComposer(loss_bindings)`          | `composer(batch, node_outputs) -> (total_loss, {name: detached loss term})`; raises `ValueError` for a non-finite or non-scalar loss.  |
 | `lwfm/evaluation/metrics.py` | `MetricBinding(name, metric, inputs)`; `binding.update(batch, node_outputs)`          | `metric` is a torchmetrics `Metric`.                                                                                   |
-| `lwfm/evaluation/evaluator.py` | `Evaluator().evaluate(graph, data_loader, metric_bindings, *, device, split_name="val", event_sink=None, training_step=None)` | Returns `EvaluationResult(metric_values={name: float})`; see §3.6.                                                    |
+| `lwfm/evaluation/evaluator.py` | `Evaluator().evaluate(graph, data_loader, metric_bindings, *, device, split_name="val", output_sink=None, training_step=None)` | Returns `EvaluationResult(metric_values={name: float})`; see §3.6.                                                    |
 | `lwfm/core/batch.py`         | `to_device(batch, device)`                                                      | Moves tensors; keeps ids and paths.                                                                                    |
 **Design choices and their reasons**
 
@@ -515,7 +515,7 @@ class DataModule(ABC):
     def test_dataloader(self) -> DataLoader: ...
 ```
 
-**Interfaces are abstract base classes (`abc.ABC`).** This applies here and to `EventSink`, `Stage`, `Benchmark` and `OutputSink` below. Every implementation inherits its interface explicitly, e.g. `class FakeClassificationDataModule(DataModule)`. _Why:_
+**Interfaces are abstract base classes (`abc.ABC`).** This applies here and to `Stage`, `Benchmark` and `OutputSink` below. Every implementation inherits its interface explicitly, e.g. `class FakeClassificationDataModule(DataModule)`. _Why:_
 
 - Python refuses to create an object whose class is missing an `@abstractmethod`. The error names the missing methods and appears when the object is built, not mid-run when a method is first called.
 - `isinstance(x, DataModule)` is a real check, so the config loader and registry can reject wrong components before a run starts.
@@ -537,11 +537,6 @@ In Phase 1 `prepare_data()` only **checks and reports** data locations; it never
 ### 3.6 Trainer and Evaluator
 
 ```python
-class EventSink(ABC):  # implemented in lwfm/results/events.py (§3.9)
-    @abstractmethod
-    def emit(self, event: RunEvent) -> None: ...  # OutputRouter implements this
-
-
 class Trainer:
     def fit(
         self,
@@ -554,7 +549,7 @@ class Trainer:
         epochs: int,
         device: torch.device,
         callbacks: Sequence[Callback] = (),
-        event_sink: EventSink | None = None,
+        output_sink: OutputSink | None = None,
         max_steps: int | None = None,
     ) -> TrainingResult: ...
 
@@ -563,21 +558,21 @@ class Evaluator:
     def evaluate(
         self,
         graph: ExecutionGraph,
-        loader: DataLoader,
-        metrics: Sequence[MetricBinding],
+        data_loader: Iterable[Batch],
+        metric_bindings: Sequence[MetricBinding],
         *,
         device: torch.device,
-        split: str = "val",
-        event_sink: EventSink | None = None,
-        step: int | None = None,
+        split_name: str = "val",
+        output_sink: OutputSink | None = None,
+        training_step: int | None = None,
     ) -> EvaluationResult: ...  # implemented in lwfm/evaluation/evaluator.py
 ```
 
 `TrainingResult.global_step: int`; `EvaluationResult.metric_values: dict[str, float]`, keyed by binding name.
 
-**The trainer does:** move batches to the device, `graph.train()`, forward, loss, `backward()`, optimizer step and zero-grad, step counting, optional validation. It is the own-loop example in `examples/building_blocks.ipynb` (§3.3) plus these. **It does not:** create runs or folders, read YAML, launch Slurm, or know which technique is in use. `event_sink=None` is the notebook default.
+**The trainer does:** move batches to the device, `graph.train()`, forward, loss, `backward()`, optimizer step and zero-grad, step counting, optional validation. It is the own-loop example in `examples/building_blocks.ipynb` (§3.3) plus these. **It does not:** create runs or folders, read YAML, launch Slurm, or know which technique is in use. `output_sink=None` is the notebook default.
 
-**The evaluator does (implemented):** reset each metric and move it to `device`, `graph.eval()` under `torch.inference_mode()`, move each batch with `to_device`, update every metric per batch, compute once at the end, then restore the graph's previous train/eval mode (also on error), so the trainer can call it for validation mid-run. It raises for an empty loader, no or duplicate metric names, and a metric that computes more than one number (e.g. `average="none"`). With an `event_sink`, each value is emitted as the scalar `eval/<split>/<name>` at `step`. `split` only names events; `"val"` is the default because validation is the common call, and the final test passes `split_name="test"`. The micro/macro choice belongs to the metric object, not the evaluator. Phase 1 reports **micro (global) top-1 and top-5** accuracy when `K >= 5`, the standard ImageNet definition; never a per-class (macro) average under those names. Names: `eval/val/top1`, `eval/val/top5`, and `eval/test/...` for the final test.
+**The evaluator does (implemented):** reset each metric and move it to `device`, `graph.eval()` under `torch.inference_mode()`, move each batch with `to_device`, update every metric per batch, compute once at the end, then restore the graph's previous train/eval mode (also on error), so the trainer can call it for validation mid-run. It raises for an empty loader, no or duplicate metric names, and a metric that computes more than one number (e.g. `average="none"`). With an `output_sink`, each value is written as the scalar `eval/<split_name>/<name>` at `training_step`. `split_name` only names events; `"val"` is the default because validation is the common call, and the final test passes `split_name="test"`. The micro/macro choice belongs to the metric object, not the evaluator. Phase 1 reports **micro (global) top-1 and top-5** accuracy when `K >= 5`, the standard ImageNet definition; never a per-class (macro) average under those names. Names: `eval/val/top1`, `eval/val/top5`, and `eval/test/...` for the final test.
 
 **Phase 1 features:** clear epoch/step output, a seed, validation, `max_steps` for smoke runs, CPU or one GPU, FP32 by default. Best/last checkpoints are saved by the stage that calls the trainer. A tiny-batch overfit check is required.
 
@@ -588,17 +583,9 @@ class Evaluator:
 ### 3.7 Stages, recipe and artifacts
 
 ```python
-@dataclass(frozen=True)
-class ArtifactRef:
-    kind: str  # "torch_checkpoint", "metrics", "model_export"
-    path: str  # inside the run directory, or an approved external path
-    producer_stage: str
-    sha256: str | None = None
-
-
 @dataclass
 class StageResult:
-    artifacts: dict[str, ArtifactRef]
+    artifacts: dict[str, str]  # name -> path inside the run directory
     measurements: dict[str, float | int | str]
     status: str = "completed"
 
@@ -642,23 +629,19 @@ Phase 1: `ParameterCount`, `ModelSize`, `ForwardLatency`; `Throughput` if trivia
 
 **Implemented** in `lwfm/results/` (tests: `tests/unit/test_{events,sinks,router}.py`; example: section 6 of `examples/building_blocks.ipynb`).
 
-_Why a router:_ computing code calls `emit` and never knows where results go, so adding a destination (CSV, MLflow) is a new sink, not an edit to the trainer.
+_Why a router:_ computing code calls `write` on one `OutputSink` and never knows where results go. The router is itself an `OutputSink` that fans out, so adding a destination (CSV, MLflow) is a new sink, not an edit to the trainer.
 
 ```mermaid
 classDiagram
     direction LR
-    class EventSink {
-        <<ABC>>
-        +emit(event)
-    }
     class OutputSink {
         <<ABC>>
         +write(event)
         +close()
     }
     class OutputRouter {
-        +list sinks
-        +emit(event)
+        +list output_sinks
+        +write(event)
         +close()
     }
     class LocalFileSink {
@@ -676,26 +659,24 @@ classDiagram
         +step
         +timestamp_utc
     }
-    EventSink <|-- OutputRouter
+    OutputSink <|-- OutputRouter
     OutputSink <|-- LocalFileSink
     OutputSink <|-- ConsoleSink
-    OutputRouter o-- "1..*" OutputSink : sinks
-    OutputRouter ..> RunEvent : emits
+    OutputRouter o-- "1..*" OutputSink : output_sinks
+    OutputRouter ..> RunEvent : writes
 ```
 
 | Where                        | Signature                                                                             | Notes                                                                                                                                                          |
 | ---------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lwfm/results/events.py`     | `RunEvent(kind, name, value, stage=None, step=None)`                                  | `kind` ∈ `scalar, table, artifact, status, message`; `timestamp_utc` is set automatically. A one-element tensor scalar is stored as a number; any other tensor raises `TypeError`. |
-|                              | `EventSink` (ABC): `emit(event)`                                                      | What `Trainer` and `Evaluator` accept (§3.6).                                                                                                                  |
-| `lwfm/results/sinks.py`      | `OutputSink` (ABC): `write(event)`, `close()`                                         | A destination.                                                                                                                                                 |
+| `lwfm/results/sinks.py`      | `OutputSink` (ABC): `write(event)`, `close()`                                         | A destination; what `Trainer` and `Evaluator` accept (§3.6).                                                                                                                                                 |
 |                              | `LocalFileSink(run_dir, manifest_fields=None)`                                               | See below. Refuses a directory that already holds a run.                                                                                                       |
 |                              | `ConsoleSink(output_stream=sys.stdout)`                                                      | One line per event: `[fit step 10] train/loss/total = 0.4321`.                                                                                                 |
 |                              | `SinkError` (`RuntimeError`)                                                          | A sink failed; names the sink and the event.                                                                                                                   |
-| `lwfm/results/router.py`     | `OutputRouter(output_sinks)`: `emit(event)`, `close()`; a context manager                     | Sends every event to every sink in order.                                                                                                                      |
+| `lwfm/results/router.py`     | `OutputRouter(*output_sinks)`: `write(event)`, `close()`; a context manager                     | An `OutputSink` that sends every event to every sink in order.                                                                                                                      |
 | `lwfm/results/manifest.py`   | `environment()`                                                                       | Python/torch/torchvision versions, platform, CUDA device, git SHA and dirty flag (`None` outside a git checkout).                                               |
-| `lwfm/core/types.py`         | `ArtifactRef(kind, path, producer_stage, sha256=None)`                                | The value of an `artifact` event (§3.7).                                                                                                                       |
 
-**Run status.** Wrap a run in `with OutputRouter(output_sinks) as router:`. A normal exit records `completed`; `KeyboardInterrupt` records `interrupted`; any other exception records its traceback and `failed`, then propagates. Every case closes the sinks. _Why:_ the status can't be left at `running` by a crash, and the traceback is kept (§6.4).
+**Run status.** Wrap a run in `with OutputRouter(*output_sinks) as router:`. A normal exit records `completed`; `KeyboardInterrupt` records `interrupted`; any other exception records its traceback and `failed`, then propagates. Every case closes the sinks. _Why:_ the status can't be left at `running` by a crash, and the traceback is kept (§6.4).
 
 **`LocalFileSink`** writes the run directory (§6.4):
 
@@ -704,7 +685,7 @@ classDiagram
 - **On close:** `summary.json`, the last value of every scalar (e.g. `eval/val/top1`).
 - `manifest.json`, `status.json` and `summary.json` are written to a temporary file and renamed, so they are never half-written.
 
-Never write tensors or images into JSONL; save a file and emit an `artifact` event with an `ArtifactRef`. A value that isn't JSON-safe raises `TypeError` before anything is written. A storage failure raises `SinkError`, never a silently "successful" run.
+Never write tensors or images into JSONL; save a file and emit an `artifact` event with its path. A value that isn't JSON-safe raises `TypeError` before anything is written. A storage failure raises `SinkError`, never a silently "successful" run.
 
 **Event names** (a convention, not enforced): `train/loss/<binding>`, `train/loss/total`, `eval/<split>/<metric>`, and `eval/test/...` for the final test.
 
@@ -729,7 +710,7 @@ repository/
 │   ├── run.py                 # CLI entry point (or cli/run.py)
 │   ├── infer.py               # single-image/batch inference CLI
 │   ├── core/
-│   │   ├── types.py           # Batch, ArtifactRef, results
+│   │   ├── types.py           # Batch, Name, results
 │   │   ├── config.py          # strict config loading and validation
 │   │   ├── names.py           # resolve, resolve_all, UnknownNameError
 │   │   ├── graph.py           # ModelNode, ExecutionGraph

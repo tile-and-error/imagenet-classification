@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import pytest
 import torch
 
-from lwfm.results.events import EventSink, RunEvent
+from lwfm.results.events import RunEvent
 
 
 def test_timestamp_is_set_in_utc():
@@ -35,8 +35,3 @@ def test_unknown_kind_fails():
 def test_unknown_status_fails():
     with pytest.raises(ValueError, match="status 'done'"):
         RunEvent("status", "status", "done")
-
-
-def test_event_sink_is_abstract():
-    with pytest.raises(TypeError):
-        EventSink()  # type: ignore[abstract]
