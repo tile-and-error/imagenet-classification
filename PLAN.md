@@ -831,7 +831,7 @@ Phase 1 implementations:
 
 In Phase 1 `prepare_data()` only **checks and reports** data locations; it never downloads ImageNet. An optional downloader for open datasets may come later, separate from training.
 
-**Manifests:** UTF-8 CSV with columns `sample_id,path,label`. `path` is relative to the dataset root; `sample_id` is stable and unique; `label` is the integer class ID. Save `class_to_idx.json` next to the manifests. Validation checks that all splits share one label map and that no `sample_id` or file appears in two splits. The split command takes an explicit seed, hold-out rule and root, and never overwrites existing split files silently. Official ImageNet val is never used for model selection if it is also the reported test set.
+**Manifests:** UTF-8 CSV with columns `sample_id,path,label`. `path` is relative to the dataset root; `sample_id` is stable and unique; `label` is the integer class ID. Save `class_to_idx.csv` (columns `class,idx`) next to the manifests. Validation checks that all splits share one label map and that no `sample_id` or file appears in two splits. The split command takes an explicit seed, hold-out rule and root, and never overwrites existing split files silently. Official ImageNet val is never used for model selection if it is also the reported test set.
 
 **Transforms:** CPU decode, RGB conversion, train/eval resize and crop as configured, optional horizontal flip, conversion to tensor. Eval transforms are deterministic. Normalisation belongs to the model's `InputAdapter`, not the dataset. The adapter resizes only when the size differs (§3.2), so a CPU crop to the right size is never resized again. The full transform chain is recorded.
 
