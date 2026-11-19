@@ -30,6 +30,14 @@ From the repository root:
    where.exe python # Windows
    ```
 
+5. **(Optional) Install the notebook kernel** to run the notebooks in `examples/`:
+
+   ```bash
+   uv sync --extra examples --inexact
+   ```
+
+   This installs the project's dependencies from `pyproject.toml` plus `ipykernel` (the `examples` extra), so `.venv` can be picked as the kernel in Jupyter or VS Code. `--inexact` keeps the packages from step 2, which `uv sync` would otherwise remove.
+
 # Datasets
 
 `download_data.py` downloads a dataset, sorts it into a standard folder layout and checks that nothing is missing. Everyone runs the same command, so everyone ends up with the same data.
