@@ -117,6 +117,13 @@ def test_sample_without_input_tensors_fails():
         ExecutionGraph([student()], preflight_sample={"inputs": {}, "targets": {}})
 
 
+def test_inputs_and_targets_with_different_batch_sizes_fail():
+    sample = batch(size=4)
+    sample["targets"]["class"] = torch.zeros(3, dtype=torch.long)
+    with pytest.raises(ValueError, match="inputs.image 4, targets.class 3"):
+        ExecutionGraph([student()], preflight_sample=sample)
+
+
 def test_loss_failure_names_the_loss():
     graph = ExecutionGraph([student()])
     bad = LossComposer([LossBinding("bad", lambda x, y: x @ y.float(), READS)])

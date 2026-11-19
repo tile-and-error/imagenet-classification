@@ -131,9 +131,10 @@ class ExecutionGraph(nn.Module):
     def preflight(self, preflight_sample: Batch) -> dict[Name, tuple[int, ...]]:
         """Runs the graph once on `preflight_sample`, so a shape mismatch fails
         now, with a note naming the node, rather than mid-training. Also checks
-        every output keeps the batch size as its first dimension. Runs in eval mode
-        without gradients and restores the mode. The sample must be on the graph's
-        device. Returns `{output name: shape}`.
+        that inputs and targets agree on the batch size, and that every output
+        keeps it as its first dimension. Runs in eval mode without gradients and
+        restores the mode. The sample must be on the graph's device. Returns
+        `{output name: shape}`.
         """
         # Get Batch Tensor Size
         sample_batch_size = batch_size(preflight_sample)
@@ -229,7 +230,18 @@ def compute_node_run_order(nodes: list[ModelNode]) -> list[str]:
 
 
 def batch_size(batch: Batch) -> int:
-    for value in batch.get("inputs", {}).values():
-        if isinstance(value, Tensor) and value.ndim > 0:
-            return value.shape[0]
-    raise ValueError("the sample batch has no input tensors")
+    # Row i of every input and target is sample i, so their first dimensions agree.
+    first_dims = {
+        f"{group}.{key}": value.shape[0]
+        for group in ("inputs", "targets")
+        for key, value in batch.get(group, {}).items()
+        if isinstance(value, Tensor) and value.ndim > 0
+    }
+    if not any(name.startswith("inputs.") for name in first_dims):
+        raise ValueError("the sample batch has no input tensors")
+    if len(set(first_dims.values())) > 1:
+        raise ValueError(
+            "batch values disagree on the batch size: "
+            + ", ".join(f"{name} {size}" for name, size in first_dims.items())
+        )
+    return next(iter(first_dims.values()))
