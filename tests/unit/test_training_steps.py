@@ -73,6 +73,29 @@ def test_accumulation_steps_every_k_batches_and_at_epoch_end():
     assert result.global_step == counter.optimizer_steps == 6
 
 
+def test_max_steps_counts_optimizer_steps_not_batches():
+    # k = 2, so 3 optimizer steps take 6 of the 10 batches
+    class CountBatches(CountSteps):
+        def __init__(self):
+            super().__init__()
+            self.batches = 0
+
+        def on_step_start(self, state, batch):
+            self.batches += 1
+
+    node, graph, loss = setup()
+    counter = CountBatches()
+    result = Trainer(device="cpu", max_steps=3, accumulate_grad_batches=2).fit(
+        graph,
+        batches(10),
+        loss,
+        torch.optim.SGD(node.parameters(), lr=0.1),
+        callbacks=[counter],
+    )
+    assert result.global_step == counter.optimizer_steps == 3
+    assert counter.batches == 6
+
+
 def test_accumulating_two_halves_equals_one_full_batch():
     # Mean loss over 8 samples = average of the mean losses of its two halves of 4
     data = batches(2, batch_size=4)

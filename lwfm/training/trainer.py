@@ -18,7 +18,6 @@ from lwfm.training.callbacks import Callback, check_callbacks
 from lwfm.training.state import (
     History,
     Precision,
-    Scheduler,
     SchedulerInterval,
     StepOutput,
     StopReason,
@@ -90,9 +89,8 @@ class Trainer:
         *,
         val_loader: Iterable[Batch] | None = None,
         metrics: Sequence[MetricBinding] = (),
-        scheduler: Scheduler | None = None,
+        scheduler: LRScheduler | None = None,
         scheduler_interval: SchedulerInterval | None = None,
-        scheduler_monitor: str | None = None,
         callbacks: Sequence[Callback] = (),
         output_sink: OutputSink | None = None,
     ) -> TrainingResult:
@@ -100,9 +98,7 @@ class Trainer:
         check_reads(graph, loss, metrics)
         check_validation(val_loader, metrics)
         check_optimizer(graph, loss, optimizer)
-        check_scheduler(
-            scheduler, scheduler_interval, scheduler_monitor, optimizer, metrics
-        )
+        check_scheduler(scheduler, scheduler_interval, optimizer)
         check_callbacks(callbacks)
 
         graph.to(self.device)
@@ -119,7 +115,6 @@ class Trainer:
             gradient_clip_norm=self.gradient_clip_norm,
             scheduler=scheduler,
             scheduler_interval=scheduler_interval,
-            scheduler_monitor=scheduler_monitor,
             output_sink=output_sink,
             callbacks=callbacks,
             metric_names=tuple(binding.name for binding in metrics),
@@ -139,10 +134,15 @@ class Trainer:
                 not history or history[-1][0] != state.global_step
             ):
                 self._validate(state, val_loader, metrics, history)
-        except KeyboardInterrupt:
-            # Callbacks can still save "last"; re-raising lets OutputRouter record
-            # the run as "interrupted"
-            state.emit("on_fit_end", self._result(state, history, "interrupted"))
+        except (KeyboardInterrupt, Exception) as error:
+            # Ctrl-C or a crash: callbacks still get on_fit_end (so "last" is saved),
+            # then the original error propagates, for OutputRouter to record. A
+            # callback failing here is attached as a note, never hiding the error.
+            reason = "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
+            try:
+                state.emit("on_fit_end", self._result(state, history, reason))
+            except Exception as hook_error:
+                error.add_note(f"on_fit_end also failed: {hook_error!r}")
             raise
         result = self._result(state, history, self._stop_reason(state))
         state.emit("on_fit_end", result)
@@ -173,8 +173,7 @@ class Trainer:
             stepped = state.is_accumulation_boundary
             if stepped:
                 state.accumulated = 0
-                if state.scheduler_interval == "step":
-                    assert isinstance(state.scheduler, LRScheduler)
+                if state.scheduler is not None and state.scheduler_interval == "step":
                     state.scheduler.step()
                 state.global_step += 1
             state.emit("on_step_end", output)
@@ -196,8 +195,7 @@ class Trainer:
         if batches == 0:
             raise ValueError("train_loader yielded no batches")
 
-        if state.scheduler_interval == "epoch":
-            assert isinstance(state.scheduler, LRScheduler)
+        if state.scheduler is not None and state.scheduler_interval == "epoch":
             state.scheduler.step()
         state.epoch += 1
         self._write(state, "train/epoch_seconds", time.perf_counter() - started)
@@ -223,11 +221,6 @@ class Trainer:
         values = result.metric_values
         state.last_val_metrics = values
         history.append((state.global_step, values))
-        if state.scheduler_interval == "validation":
-            # check_scheduler guarantees a ReduceLROnPlateau and a metric name here
-            assert isinstance(state.scheduler, ReduceLROnPlateau)
-            assert state.scheduler_monitor is not None
-            state.scheduler.step(values[state.scheduler_monitor])
         state.emit("on_validation_end", values)
 
     def _check_step_used_helpers(self, state: TrainingState) -> None:
@@ -324,33 +317,23 @@ def check_optimizer(
 
 
 def check_scheduler(
-    scheduler: Scheduler | None,
+    scheduler: LRScheduler | None,
     interval: SchedulerInterval | None,
-    monitor: str | None,
     optimizer: torch.optim.Optimizer,
-    metrics: Sequence[MetricBinding],
 ) -> None:
     if scheduler is None:
-        if interval is not None or monitor is not None:
-            raise ValueError("scheduler_interval/monitor given without a scheduler")
+        if interval is not None:
+            raise ValueError("scheduler_interval given without a scheduler")
         return
     # No default: per step and per epoch differ by a factor of the epoch length
-    if interval not in ("step", "epoch", "validation"):
-        raise ValueError(
-            "pass scheduler_interval='step', 'epoch' or 'validation' with a scheduler"
-        )
+    if interval not in ("step", "epoch"):
+        raise ValueError("pass scheduler_interval='step' or 'epoch' with a scheduler")
     if scheduler.optimizer is not optimizer:
         raise ValueError("the scheduler was built for a different optimizer")
-    if isinstance(scheduler, ReduceLROnPlateau) != (interval == "validation"):
+    # The trainer only calls scheduler.step(); ReduceLROnPlateau needs a metric, which
+    # would fail with a TypeError after the first epoch. Refuse it now instead.
+    if isinstance(scheduler, ReduceLROnPlateau):
         raise ValueError(
-            "ReduceLROnPlateau steps on a validation metric: it needs "
-            "scheduler_interval='validation', and no other scheduler may use it"
+            "ReduceLROnPlateau steps on a validation metric: call "
+            "scheduler.step(metrics[name]) from a Callback's on_validation_end"
         )
-    metric_names = [binding.name for binding in metrics]
-    if interval == "validation" and monitor not in metric_names:
-        raise ValueError(
-            f"scheduler_monitor must name a validation metric {metric_names}, "
-            f"got {monitor!r}"
-        )
-    if interval != "validation" and monitor is not None:
-        raise ValueError("scheduler_monitor is only used with interval='validation'")

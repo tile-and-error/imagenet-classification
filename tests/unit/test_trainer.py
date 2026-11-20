@@ -288,9 +288,17 @@ def test_scheduler_stepped_per_epoch():
     assert optimizer.param_groups[0]["lr"] == 0.25
 
 
-def test_plateau_scheduler_stepped_on_the_monitored_metric():
-    # The metric never changes, so with patience 0 every validation after the first
-    # halves the learning rate
+def test_plateau_scheduler_steps_from_a_callback():
+    # ReduceLROnPlateau needs a metric, so it is stepped from a callback rather than
+    # by the trainer. The metric never changes, so with patience 0 every validation
+    # after the first halves the learning rate.
+    class Plateau(Callback):
+        def __init__(self, scheduler, monitor):
+            self.scheduler, self.monitor = scheduler, monitor
+
+        def on_validation_end(self, state, metrics):
+            self.scheduler.step(metrics[self.monitor])
+
     _, graph, loss, optimizer = setup(lr=1.0)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="max", factor=0.5, patience=0
@@ -302,9 +310,7 @@ def test_plateau_scheduler_stepped_on_the_monitored_metric():
         optimizer,
         val_loader=batches(1),
         metrics=constant_metric(),
-        scheduler=scheduler,
-        scheduler_interval="validation",
-        scheduler_monitor="const",
+        callbacks=[Plateau(scheduler, "const")],
     )
     assert optimizer.param_groups[0]["lr"] == 0.25
 
@@ -314,24 +320,9 @@ def test_plateau_scheduler_stepped_on_the_monitored_metric():
     [
         (lambda o: torch.optim.lr_scheduler.StepLR(o, 1), {}, "scheduler_interval"),
         (
-            lambda o: torch.optim.lr_scheduler.StepLR(o, 1),
-            {"scheduler_interval": "validation", "scheduler_monitor": "const"},
-            "ReduceLROnPlateau",
-        ),
-        (
             lambda o: torch.optim.lr_scheduler.ReduceLROnPlateau(o),
             {"scheduler_interval": "epoch"},
-            "ReduceLROnPlateau",
-        ),
-        (
-            lambda o: torch.optim.lr_scheduler.ReduceLROnPlateau(o),
-            {"scheduler_interval": "validation", "scheduler_monitor": "missing"},
-            "scheduler_monitor",
-        ),
-        (
-            lambda o: torch.optim.lr_scheduler.StepLR(o, 1),
-            {"scheduler_interval": "step", "scheduler_monitor": "const"},
-            "scheduler_monitor",
+            "on_validation_end",
         ),
         (
             lambda o: torch.optim.lr_scheduler.StepLR(
@@ -377,6 +368,32 @@ def test_misspelled_binding_name_fails_before_training():
         Trainer(device="cpu", max_steps=1).fit(graph, batches(1), bad, optimizer)
 
 
+def test_misspelled_metric_name_fails_before_training():
+    _, graph, loss, optimizer = setup()
+    # "student.logit" is a deliberate typo for "student.logits"
+    typo = [
+        MetricBinding(
+            "top1",
+            MulticlassAccuracy(K, average="micro"),
+            ["student.logit", "targets.class"],
+        )
+    ]
+    recorder = HookRecorder()
+    with pytest.raises(GraphError, match="student.logit"):
+        Trainer(device="cpu", max_epochs=1).fit(
+            graph,
+            batches(1),
+            loss,
+            optimizer,
+            val_loader=batches(1),
+            metrics=typo,
+            callbacks=[recorder],
+        )
+    # Not even on_fit_start ran, so it failed before the first batch, not at the
+    # first validation an epoch later
+    assert recorder.calls == []
+
+
 def test_trainable_node_missing_from_optimizer_is_named():
     node = student()
     projector = ModelNode(
@@ -390,6 +407,21 @@ def test_trainable_node_missing_from_optimizer_is_named():
         Trainer(device="cpu", max_steps=1).fit(
             graph, batches(1), loss, torch.optim.SGD(node.parameters(), lr=0.1)
         )
+
+
+def test_trainable_loss_parameter_missing_from_optimizer_is_named():
+    class TemperatureCE(nn.Module):  # a loss with its own learnable parameter
+        def __init__(self):
+            super().__init__()
+            self.temperature = nn.Parameter(torch.ones(()))
+
+        def forward(self, logits, target):
+            return nn.functional.cross_entropy(logits / self.temperature, target)
+
+    node, graph, _, optimizer = setup()  # the optimizer holds the student only
+    loss = LossComposer([LossBinding("ce", TemperatureCE(), CE_READS)])
+    with pytest.raises(ValueError, match="temperature"):
+        Trainer(device="cpu", max_steps=1).fit(graph, batches(1), loss, optimizer)
 
 
 def test_val_loader_and_metrics_go_together():
@@ -412,9 +444,13 @@ def test_empty_loader_fails():
     [
         ({}, "max_epochs, max_steps"),
         ({"max_epochs": 0}, "max_epochs"),
+        ({"max_steps": 0}, "max_steps"),
+        ({"max_steps": 1, "val_every_n_steps": 0}, "val_every_n_steps"),
+        ({"max_steps": 1, "log_every_n_steps": 0}, "log_every_n_steps"),
         ({"max_steps": 1, "accumulate_grad_batches": 0}, "accumulate_grad_batches"),
         ({"max_steps": 1, "precision": "fp8"}, "precision"),
         ({"max_steps": 1, "gradient_clip_norm": 0.0}, "gradient_clip_norm"),
+        ({"max_steps": 1, "gradient_clip_norm": -1.0}, "gradient_clip_norm"),
     ],
 )
 def test_invalid_trainer_settings(kwargs, message):
@@ -466,23 +502,28 @@ def test_callback_can_stop_training():
     assert (result.stop_reason, result.epochs_completed) == ("stopped", 1)
 
 
-def test_interrupt_runs_on_fit_end_then_reraises():
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [(KeyboardInterrupt, "interrupted"), (RuntimeError, "failed")],
+    ids=["ctrl_c", "crash"],
+)
+def test_early_exit_runs_on_fit_end_then_reraises(error, reason):
     ended = []
 
-    class Interrupt(Callback):
+    class Exit(Callback):
         def on_step_end(self, state, output):
             if state.global_step == 2:
-                raise KeyboardInterrupt
+                raise error
 
         def on_fit_end(self, state, result):
             ended.append(result.stop_reason)
 
     _, graph, loss, optimizer = setup()
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(error):
         Trainer(device="cpu", max_epochs=1).fit(
-            graph, batches(5), loss, optimizer, callbacks=[Interrupt()]
+            graph, batches(5), loss, optimizer, callbacks=[Exit()]
         )
-    assert ended == ["interrupted"]
+    assert ended == [reason]
 
 
 # --- result and seeding ---------------------------------------------------------

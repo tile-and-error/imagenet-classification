@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 import torch
 from torch import Tensor
 from torch.amp.grad_scaler import GradScaler
-from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
+from torch.optim.lr_scheduler import LRScheduler
 
 from lwfm.core.graph import ExecutionGraph
 from lwfm.core.losses import LossComposer
@@ -15,11 +15,10 @@ if TYPE_CHECKING:
     from lwfm.training.callbacks import Callback
 
 type Precision = Literal["fp32", "bf16", "fp16"]
-# When the trainer calls scheduler.step(): after each optimizer step, after each full
-# epoch, or after each validation (ReduceLROnPlateau only, given the monitored metric).
-type SchedulerInterval = Literal["step", "epoch", "validation"]
-type Scheduler = LRScheduler | ReduceLROnPlateau
-type StopReason = Literal["max_epochs", "max_steps", "stopped", "interrupted"]
+# When the trainer calls scheduler.step(): after each optimizer step, or after each
+# full epoch
+type SchedulerInterval = Literal["step", "epoch"]
+type StopReason = Literal["max_epochs", "max_steps", "stopped", "interrupted", "failed"]
 # (global_step, validation metrics) for every validation, in order
 type History = list[tuple[int, dict[str, float]]]
 
@@ -47,9 +46,8 @@ class TrainingState:
     scaler: GradScaler | None = None  # fp16 only
     accumulate_grad_batches: int = 1
     gradient_clip_norm: float | None = None
-    scheduler: Scheduler | None = None
+    scheduler: LRScheduler | None = None
     scheduler_interval: SchedulerInterval | None = None
-    scheduler_monitor: str | None = None
     output_sink: OutputSink | None = None
     callbacks: Sequence["Callback"] = ()
     # Names of the validation metrics, so callbacks can check a monitor before training

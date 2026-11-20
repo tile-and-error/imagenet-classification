@@ -17,6 +17,7 @@ from lwfm.training.callbacks import (
     EMAUpdate,
     LossWeightSchedule,
     ModelCheckpoint,
+    improved,
 )
 
 K = 3
@@ -163,6 +164,55 @@ def test_monitor_must_be_a_validation_metric(with_validation):
         )
 
 
+@pytest.mark.parametrize(
+    ("value", "best", "mode", "min_delta", "expected"),
+    [
+        (0.5, None, "max", 0.0, True),  # the first value always counts as better
+        (0.6, 0.5, "max", 0.0, True),
+        (0.5, 0.5, "max", 0.0, False),  # equal is not better
+        (0.54, 0.5, "max", 0.05, False),  # better, but by less than min_delta
+        (0.4, 0.5, "min", 0.0, True),
+        (0.6, 0.5, "min", 0.0, False),
+        (0.47, 0.5, "min", 0.05, False),
+    ],
+)
+def test_improved(value, best, mode, min_delta, expected):
+    assert improved(value, best, mode, min_delta) is expected
+
+
+def test_mode_must_be_max_or_min(tmp_path):
+    with pytest.raises(ValueError, match="'max' or 'min'"):
+        EarlyStopping("top1", mode="maximum")  # type: ignore[arg-type]  # deliberate
+    with pytest.raises(ValueError, match="'max' or 'min'"):
+        ModelCheckpoint(tmp_path, monitor="top1", mode="maximum")  # type: ignore[arg-type]
+
+
+def test_callbacks_start_afresh_in_every_fit(tmp_path):
+    # The same callback instances in two fits. Each fit must reset them: otherwise
+    # the second fit inherits the first's best value, stops one validation early
+    # and never saves best.pt.
+    stopper = EarlyStopping("const", patience=1)
+    checkpoint = ModelCheckpoint(tmp_path, monitor="const", save_last=False)
+    for _ in range(2):
+        _, graph, loss, optimizer = setup()
+        sink = ListSink()
+        result = Trainer(device="cpu", max_epochs=10).fit(
+            graph,
+            batches(2),
+            loss,
+            optimizer,
+            val_loader=batches(1),
+            metrics=constant_metric(),
+            callbacks=[stopper, checkpoint],
+            output_sink=sink,
+        )
+        # Validation 1 sets the best (and saves it); validation 2 doesn't improve
+        assert (result.stop_reason, result.epochs_completed) == ("stopped", 2)
+        assert [e.name for e in sink.events if e.kind == "artifact"] == [
+            "checkpoint/best"
+        ]
+
+
 # --- ModelCheckpoint ------------------------------------------------------------
 
 
@@ -207,6 +257,27 @@ def test_checkpoint_last_holds_the_full_training_state(tmp_path):
         "epoch",
     }
     assert (last["global_step"], last["epoch"]) == (7, 2)
+
+
+def test_checkpoint_without_save_last_writes_no_last(tmp_path):
+    _, graph, loss, optimizer = setup()
+    checkpoint = ModelCheckpoint(tmp_path, save_last=False)
+    state = bare_state(graph, loss, optimizer)
+    checkpoint.on_fit_start(state)
+    checkpoint.on_fit_end(state, TrainingResult(0, 0, "max_steps", []))
+    assert not (tmp_path / "checkpoints/last.pt").exists()
+
+
+def test_checkpoint_mode_min_saves_when_the_metric_falls(tmp_path):
+    _, graph, loss, optimizer = setup()
+    sink = ListSink()
+    checkpoint = ModelCheckpoint(tmp_path, monitor="loss", mode="min")
+    state = bare_state(graph, loss, optimizer, sink, metric_names=("loss",))
+    checkpoint.on_fit_start(state)
+    for step, value in enumerate([1.0, 0.5, 0.7, 0.4], start=1):
+        state.global_step = step
+        checkpoint.on_validation_end(state, {"loss": value})
+    assert [e.step for e in sink.events if e.name == "checkpoint/best"] == [1, 2, 4]
 
 
 def test_checkpoint_in_a_real_run_records_artifacts(tmp_path):

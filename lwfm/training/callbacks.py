@@ -146,7 +146,7 @@ class EarlyStopping(Callback):
 class ModelCheckpoint(Callback):
     """Saves one node's weights as `best.pt` whenever `monitor` improves (only if a
     monitor is given), and the full training state as `last.pt` when fit ends,
-    including after Ctrl-C.
+    including after Ctrl-C or a crash (check `result.stop_reason` to tell).
 
     Files go in `run_dir/subdir`. Each save is written atomically, then announced as
     an `artifact` event whose path is relative to `run_dir`, so the run directory can
