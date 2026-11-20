@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>18. Settings, sweeps and checks</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><span><a href="../index.html">Docs</a> / <a href="index.html">lwfm tutorial</a></span><span data-slide-counter>18</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>18. Settings, sweeps, and mistakes caught early</h1>
+
+<p class="lead">Loop settings such as mixed precision are constructor arguments. Because the trainer keeps nothing between runs, one trainer can run a whole sweep. And <code>fit</code> checks its inputs before the first batch.</p>
+<pre class="code"><code class="language-python">trainer = Trainer(
+    device=&quot;cpu&quot;,
+    max_epochs=3,
+    precision=&quot;bf16&quot;,             # lwfm: forward pass in bfloat16; weights stay fp32
+    accumulate_grad_batches=2,    # lwfm: one optimizer step per 2 batches (effective batch 64)
+    gradient_clip_norm=1.0,       # lwfm: clip the gradient norm before each step
+)
+best_top1 = {}
+for lr in (0.01, 0.1, 0.5):
+    seed_everything(0)                                     # lwfm: same initial weights each run
+    student = make_student()                               # fresh objects for every run
+    result = trainer.fit(
+        ExecutionGraph([student]), train_loader, loss,
+        torch.optim.SGD(student.parameters(), lr=lr),       # torch: a new optimizer per run
+        val_loader=val_loader, metrics=metrics,
+    )
+    best_top1[lr] = round(result.best(&quot;top1&quot;)[&quot;top1&quot;], 3)
+best_top1</code></pre>
+<pre class="output">{0.01: 0.919, 0.1: 0.906, 0.5: 0.881}</pre>
+<table>
+  <tr><th>Setting</th><th>Does</th></tr>
+  <tr><td><code>max_epochs</code>, <code>max_steps</code></td><td>when to stop; <code>max_steps=3</code> makes a quick smoke test</td></tr>
+  <tr><td><code>precision</code></td><td><code>"fp32"</code> (default), <code>"bf16"</code> or <code>"fp16"</code> (with gradient scaling)</td></tr>
+  <tr><td><code>accumulate_grad_batches</code></td><td>add up gradients over k batches before each optimizer step</td></tr>
+  <tr><td><code>gradient_clip_norm</code></td><td>clip the total gradient norm</td></tr>
+  <tr><td><code>val_every_n_steps</code>, <code>log_every_n_steps</code></td><td>how often to validate and log</td></tr>
+  <tr><td><code>step_fn</code></td><td>replace what one step computes; the rest of the loop stays</td></tr>
+</table>
+
+<h3>Mistakes fail before training starts</h3>
+<pre class="code"><code class="language-python">projector = ModelNode(&quot;projector&quot;, nn.Linear(K, K), inputs=&quot;student.logits&quot;, outputs=&quot;z&quot;)
+graph = ExecutionGraph([student, projector])               # projected_loss reads &quot;projector.z&quot;
+Trainer(device=&quot;cpu&quot;, max_epochs=1).fit(
+    graph, train_loader, projected_loss,
+    torch.optim.SGD(student.parameters(), lr=0.1),         # the projector was left out
+)</code></pre>
+<pre class="output">ValueError: trainable parameters missing from the optimizer:
+['nodes.projector.module.weight', 'nodes.projector.module.bias']</pre>
+<table>
+  <tr><th>Checked before the first batch</th><th>Instead of</th></tr>
+  <tr><td>every name a loss or metric reads exists</td><td>a crash at the first step</td></tr>
+  <tr><td>every trainable parameter is in the optimizer</td><td>a node that silently never learns</td></tr>
+  <tr><td>a scheduler comes with its interval, and belongs to this optimizer</td><td>a learning rate that's wrong for the whole run</td></tr>
+  <tr><td>callbacks only define real hooks (<code>on_validation_ended</code> is refused)</td><td>a callback that silently never runs</td></tr>
+</table>
+<div class="why"><strong>Why?</strong> A training run can take hours. Every check here costs milliseconds, and turns a silent mistake into an error message that names the problem.</div>
+
+<h3>Going further</h3>
+<table>
+  <tr><td><code>examples/trainer.ipynb</code></td><td>every snippet in Part 2, runnable on CPU in seconds</td></tr>
+  <tr><td><code>TRAINER.md</code></td><td>the full design: every setting, the exact loop order, saving, sweeps and tuning</td></tr>
+  <tr><td><code>lwfm/training/</code></td><td>the code: <code>trainer.py</code>, <code>callbacks.py</code>, <code>steps.py</code>, <code>state.py</code></td></tr>
+  <tr><td><code>tests/unit/test_trainer.py</code></td><td>with <code>test_training_steps.py</code> and <code>test_training_callbacks.py</code>: what is guaranteed</td></tr>
+</table>
+
+</main>
+<nav class="pager"><a rel="prev" href="17-saving.html">← 17. Saving trained models</a><span class="off">.</span></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

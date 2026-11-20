@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13. The Trainer</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><span><a href="../index.html">Docs</a> / <a href="index.html">lwfm tutorial</a></span><span data-slide-counter>13</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>13. The Trainer: training in one call</h1>
+
+<p class="lead">The <code class="l">Trainer</code> runs the training loop for any graph, loss and PyTorch optimizer. It is the hand-written loop from slide 9 plus the bookkeeping around it: moving data to the device, counting steps, validating, logging and stopping.</p>
+<p class="muted">Part 2 of the tutorial continues from the setup in <code>examples/trainer.ipynb</code>: <code>make_student()</code> builds a one-node student (slide 4), <code>CE_READS</code> is <code>["student.logits", "targets.class"]</code>, and <code>train_loader</code> / <code>val_loader</code> are lists of batch dicts (slide 3).</p>
+<pre class="code"><code class="language-python">from lwfm.training import Trainer, seed_everything          # lwfm
+
+seed_everything(0)                                           # lwfm: seed before building, so weights repeat
+student = make_student()                                     # lwfm: a ModelNode (slide 4)
+graph = ExecutionGraph([student])                            # lwfm: a one-node graph (slide 5)
+loss = LossComposer([LossBinding(&quot;ce&quot;, nn.CrossEntropyLoss(), CE_READS)])  # lwfm + torch (slide 6)
+optimizer = torch.optim.SGD(student.parameters(), lr=0.1)    # torch: any optimizer, built by you
+
+trainer = Trainer(device=&quot;cpu&quot;, max_epochs=3)                # lwfm: HOW to train (the loop settings)
+result = trainer.fit(graph, train_loader, loss, optimizer)   # lwfm: WHAT to train (this run's objects)
+result</code></pre>
+<pre class="output">TrainingResult(global_step=60, epochs_completed=3, stop_reason='max_epochs', history=[])
+# 3 epochs × 20 batches = 60 optimizer steps; no validation ran, so history is empty</pre>
+
+<h3>What <code>fit</code> runs, without the bookkeeping</h3>
+<pre class="code"><code class="language-python">graph.train()                                     # torch: training mode (frozen teachers stay in eval)
+for epoch in range(3):
+    for batch in train_loader:
+        total, terms = loss(batch, graph(batch))  # lwfm: forward pass, then the weighted loss
+        optimizer.zero_grad()                     # torch
+        total.backward()                          # torch
+        optimizer.step()                          # torch</code></pre>
+<p class="muted">From the same seed, this loop and <code>trainer.fit</code> give bit-identical weights (a unit test checks it). The trainer adds bookkeeping, never different maths.</p>
+
+<table>
+  <tr><th>The trainer does</th><th>The trainer does not</th></tr>
+  <tr><td>move batches, the graph and the loss to the device</td><td>build models, losses or optimizers</td></tr>
+  <tr><td>forward, loss, backward, optimizer step</td><td>know whether a teacher exists</td></tr>
+  <tr><td>count steps and epochs, and stop at a limit</td><td>create run folders or read config files</td></tr>
+  <tr><td>validate and log, if you ask it to (slide 14)</td><td>save models, unless a callback does (slide 17)</td></tr>
+</table>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">torch.optim.SGD</code> — or AdamW, or any optimizer: you build it, so the trainer never needs to know which.</li><li><code class="t">train_loader</code> — a <code class="t">DataLoader</code>, or any iterable of batch dicts.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">Trainer(device, max_epochs, max_steps, ...)</code> — the loop settings. At least one of <code>max_epochs</code> / <code>max_steps</code> is required.</li><li><code class="l">trainer.fit(graph, train_loader, loss, optimizer, ...)</code> — runs training and returns a <code class="l">TrainingResult</code>: <code>global_step</code>, <code>epochs_completed</code>, <code>stop_reason</code>, <code>history</code>.</li><li><code class="l">seed_everything(seed)</code> — seeds Python, NumPy and torch.</li></ul></div></div>
+<div class="why"><strong>Why split the constructor from fit?</strong> The constructor holds how to train, and keeps nothing between runs, so one trainer can run a whole sweep (slide 18). Everything with state (weights, optimizer momentum) is passed to <code>fit</code> fresh for each run. And every input is a plain PyTorch object, so you can always drop back to your own loop.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="12-contributing.html">← 12. Getting started</a><a rel="next" href="14-training-loop.html">14. Inside fit →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>
