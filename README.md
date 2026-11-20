@@ -49,6 +49,10 @@ From the repository root:
 
 Use `tiny-imagenet` to try the script out before downloading ImageNet-1k.
 
+> [!IMPORTANT]
+> `imagenet-1k` and `tiny-imagenet` have a different order of labels and don't fully overlap. Created `download/create_imagenet_mapping.py` to remedy this.
+
+
 ## 1. Set up Hugging Face access (once per person)
 
 1. **Log in** to [huggingface.co](https://huggingface.co), or create a free account.
