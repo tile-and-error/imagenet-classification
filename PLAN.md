@@ -49,15 +49,15 @@ There are two graphs, at two levels:
 
 **Terms used throughout**
 
-| Term      | Meaning                                                                                                     |
-| --------- | ----------------------------------------------------------------------------------------------------------- |
-| Name      | A dotted name for one value: a batch value (`inputs.image`) or a node output (`student.logits`).            |
+| Term      | Meaning                                                                                                                |
+| --------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Name      | A dotted name for one value: a batch value (`inputs.image`) or a node output (`student.logits`).                       |
 | Binding   | A loss or metric plus the names of the values it reads, in argument order, e.g. `["student.logits", "targets.class"]`. |
-| Interface | The declared inputs, outputs and behaviour of a component.                                                  |
-| Registry  | A fixed table from a name in a config (`"resnet18"`) to the code that builds it.                            |
-| Adapter   | A small module that changes a value's form at a boundary (resize and normalise; project features).          |
-| Sink      | A destination for results (local files, console). Code emits results without knowing where they are stored. |
-| Artifact  | A saved file a stage produces (checkpoint, weights, metrics), referred to by an explicit reference.         |
+| Interface | The declared inputs, outputs and behaviour of a component.                                                             |
+| Registry  | A fixed table from a name in a config (`"resnet18"`) to the code that builds it.                                       |
+| Adapter   | A small module that changes a value's form at a boundary (resize and normalise; project features).                     |
+| Sink      | A destination for results (local files, console). Code emits results without knowing where they are stored.            |
+| Artifact  | A saved file a stage produces (checkpoint, weights, metrics), referred to by an explicit reference.                    |
 
 **Combine objects; don't subclass per combination.** New behaviour comes from combining ordinary PyTorch objects, not from a subclass for each mix of techniques. _Why:_ with $n$ techniques, subclasses for every mix grow like $2^n$; combinable objects grow like $n$.
 
@@ -109,7 +109,7 @@ Agents implement these defaults unless the team changes them in Phase 0. They ar
 | D02 | Python/PyTorch         | A Python version the **actual cluster** supports, with a matching locked PyTorch/torchvision/torchmetrics set              | **Verify on DCS**; do not hard-code Python 3.14 |
 | D03 | Building blocks        | `torch.nn.Module`, `Dataset`/`DataLoader`, `torch.optim.Optimizer`, `torchmetrics.Metric`; nothing else                    | Accepted                                        |
 | D04 | Data format            | Nested dict `{"inputs": ..., "targets": ..., "meta": ...}`; numbers are `Tensor`s. Torch tools already handle dicts (§3.1) | Accepted                                        |
-| D05 | Model wrapping         | The raw `nn.Module` is never changed; `ModelNode` names the values it reads and writes                            | Accepted                                        |
+| D05 | Model wrapping         | The raw `nn.Module` is never changed; `ModelNode` names the values it reads and writes                                     | Accepted                                        |
 | D06 | Forward graph          | A small graph fixed at build time; nodes stored in `nn.ModuleDict`; no rewriting while running                             | Accepted                                        |
 | D07 | Losses and metrics     | Ordinary callables, `nn.Module`s or torchmetrics objects, each with **named input bindings**                               | Accepted                                        |
 | D08 | Training loop          | A short, readable, single-device `Trainer` in plain PyTorch; no Lightning                                                  | Accepted                                        |
@@ -251,13 +251,13 @@ classDiagram
 
 Read it as: a graph **holds** nodes; a node **holds** one untouched module, often an `nn.Sequential` of preprocessing transforms then the model; a composer **holds** loss bindings; a metric binding **holds** one torchmetrics metric. Nothing inherits from anything except `nn.Module`. One function, `resolve_all(names, batch, outputs)` (not drawn), turns names into values; the graph, the composer and the metric bindings all call it, so a name means the same thing everywhere.
 
-| Object           | Is a        | Job                                                                                  | Why it exists                                                                                          |
-| ---------------- | ----------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `ModelNode`      | `nn.Module` | Passes its `inputs` to its module, in order; stores what it returns under its `outputs` | Any model works as-is, whatever its argument names or return type (Tensor, tuple or dict).       |
-| `ExecutionGraph` | `nn.Module` | Runs nodes in dependency order; returns `{name: Tensor}`                             | One class serves 1 node now and $n$ nodes later, so KD needs no second execution path.                 |
-| `LossBinding`    | dataclass   | Pairs a loss with the values it reads and a weight                                   | `nn.CrossEntropyLoss` is used unwrapped; only the wiring is new.                                       |
-| `LossComposer`   | `nn.Module` | Computes $\mathcal{L} = \sum_i w_i \ell_i$ and per-term logs                         | Adding a loss term (KD, regulariser) is one more list entry, not a trainer change.                     |
-| `MetricBinding`  | dataclass   | Pairs a torchmetrics metric with the values it reads                                 | The same metric can score the student or a teacher by changing one name.                               |
+| Object           | Is a        | Job                                                                                     | Why it exists                                                                              |
+| ---------------- | ----------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `ModelNode`      | `nn.Module` | Passes its `inputs` to its module, in order; stores what it returns under its `outputs` | Any model works as-is, whatever its argument names or return type (Tensor, tuple or dict). |
+| `ExecutionGraph` | `nn.Module` | Runs nodes in dependency order; returns `{name: Tensor}`                                | One class serves 1 node now and $n$ nodes later, so KD needs no second execution path.     |
+| `LossBinding`    | dataclass   | Pairs a loss with the values it reads and a weight                                      | `nn.CrossEntropyLoss` is used unwrapped; only the wiring is new.                           |
+| `LossComposer`   | `nn.Module` | Computes $\mathcal{L} = \sum_i w_i \ell_i$ and per-term logs                            | Adding a loss term (KD, regulariser) is one more list entry, not a trainer change.         |
+| `MetricBinding`  | dataclass   | Pairs a torchmetrics metric with the values it reads                                    | The same metric can score the student or a teacher by changing one name.                   |
 
 **One forward pass of the single-node graph**
 
@@ -306,17 +306,18 @@ sequenceDiagram
 
 **API (implemented).** The code is in `lwfm/`, with tests in `tests/unit/` and runnable examples in `examples/building_blocks.ipynb`. The code is the reference; this summary only says what each piece accepts.
 
-| Where                        | Signature                                                                       | Notes                                                                                                                  |
-| ---------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `lwfm/core/names.py`         | `resolve(value_name, batch, node_outputs)`, `resolve_all(value_names, batch, node_outputs)`           | Raises `UnknownNameError` (a `KeyError`) naming the missing value.                                                     |
-| `lwfm/core/graph.py`         | `ModelNode(name, module, inputs, outputs)`                                        | `inputs`/`outputs` take one name or a list. Node names can't contain `.` or be `inputs`, `targets` or `meta`.            |
-|                              | `ExecutionGraph(nodes, preflight_sample=None)`; `graph(batch) -> {name: Tensor}`          | Raises `GraphError` at build time for duplicate names, unknown reads and cycles. Given a `sample` batch, then runs `preflight(preflight_sample)`; output shapes in `graph.preflight_output_shapes` (`None` without a sample). |
-|                              | `graph.preflight(preflight_sample) -> {name: shape}`                                      | Runs the graph once on `sample` (any batch on the graph's device, even zeros). Eval mode, no gradients, mode restored; every output must keep the batch size as its first dimension. |
-|                              | `graph.deployable_model(node_name) -> nn.Module`                                     | The named node's module itself, sharing weights. No default: the graph doesn't know which node is the student.         |
-| `lwfm/core/losses.py`        | `LossBinding(name, loss, inputs, weight=1.0)`; `LossComposer(loss_bindings)`          | `composer(batch, node_outputs) -> (total_loss, {name: detached loss term})`; raises `ValueError` for a non-finite or non-scalar loss.  |
-| `lwfm/evaluation/metrics.py` | `MetricBinding(name, metric, inputs)`; `binding.update(batch, node_outputs)`          | `metric` is a torchmetrics `Metric`.                                                                                   |
-| `lwfm/evaluation/evaluator.py` | `Evaluator().evaluate(graph, data_loader, metric_bindings, *, device, split_name="val", output_sink=None, training_step=None)` | Returns `EvaluationResult(metric_values={name: float})`; see §3.6.                                                    |
-| `lwfm/core/batch.py`         | `to_device(batch, device)`                                                      | Moves tensors; keeps ids and paths.                                                                                    |
+| Where                          | Signature                                                                                                                      | Notes                                                                                                                                                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lwfm/core/names.py`           | `resolve(value_name, batch, node_outputs)`, `resolve_all(value_names, batch, node_outputs)`                                    | Raises `UnknownNameError` (a `KeyError`) naming the missing value.                                                                                                                                                            |
+| `lwfm/core/graph.py`           | `ModelNode(name, module, inputs, outputs)`                                                                                     | `inputs`/`outputs` take one name or a list. Node names can't contain `.` or be `inputs`, `targets` or `meta`.                                                                                                                 |
+|                                | `ExecutionGraph(nodes, preflight_sample=None)`; `graph(batch) -> {name: Tensor}`                                               | Raises `GraphError` at build time for duplicate names, unknown reads and cycles. Given a `sample` batch, then runs `preflight(preflight_sample)`; output shapes in `graph.preflight_output_shapes` (`None` without a sample). |
+|                                | `graph.preflight(preflight_sample) -> {name: shape}`                                                                           | Runs the graph once on `sample` (any batch on the graph's device, even zeros). Eval mode, no gradients, mode restored; every output must keep the batch size as its first dimension.                                          |
+|                                | `graph.deployable_model(node_name) -> nn.Module`                                                                               | The named node's module itself, sharing weights. No default: the graph doesn't know which node is the student.                                                                                                                |
+| `lwfm/core/losses.py`          | `LossBinding(name, loss, inputs, weight=1.0)`; `LossComposer(loss_bindings)`                                                   | `composer(batch, node_outputs) -> (total_loss, {name: detached loss term})`; raises `ValueError` for a non-finite or non-scalar loss.                                                                                         |
+| `lwfm/evaluation/metrics.py`   | `MetricBinding(name, metric, inputs)`; `binding.update(batch, node_outputs)`                                                   | `metric` is a torchmetrics `Metric`.                                                                                                                                                                                          |
+| `lwfm/evaluation/evaluator.py` | `Evaluator().evaluate(graph, data_loader, metric_bindings, *, device, split_name="val", output_sink=None, training_step=None)` | Returns `EvaluationResult(metric_values={name: float})`; see §3.6.                                                                                                                                                            |
+| `lwfm/core/batch.py`           | `to_device(batch, device)`                                                                                                     | Moves tensors; keeps ids and paths.                                                                                                                                                                                           |
+
 **Design choices and their reasons**
 
 - **Values are passed by position, not by argument name.** You don't need to know that torchvision calls its argument `x`, and `CrossEntropyLoss(input, target)` and torchmetrics' `update(preds, target)` already take their values in a fixed order. TIAToolbox's IO configs also list a model's inputs in `forward` order, so a TIAToolbox wrapper (§9) lines up one-to-one.
@@ -393,18 +394,18 @@ metrics.append(
 
 _Why this is enough:_ the graph only knows a node through `name`, `inputs`, `outputs` and `forward`, and a loss or metric only through the names it reads. Anything that fits those slots plugs in without the existing code knowing about it.
 
-| Later need                                     | What is added                                                                                       | Phase 1 code touched                         |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| A frozen teacher (Phase 2)                     | A second `ModelNode` with `frozen=True`                                                             | `ModelNode`: one keyword, a `train` override, a no-grad branch |
-| Logit KD                                       | A `KDLoss` module and one `LossBinding`                                                             | None                                         |
-| Several teachers                               | More nodes with distinct names (`vit.logits`, `cnn.logits`)                                         | None                                         |
-| Feature KD                                     | The model returns a dict and the node `outputs=["logits", "features"]`; a projector node wrapping `nn.Linear` reads `student.features` | None |
-| Features from a model that returns logits only | A `taps=` keyword on `ModelNode`, using forward hooks                                               | `ModelNode`: one keyword                     |
-| Deploying a multi-node student                 | A `nodes=` keyword on `deployable_model` that returns a sub-graph                                   | `ExecutionGraph`: one keyword                |
-| Cached teacher outputs                         | A node that reads `meta.sample_id` and looks up the saved outputs                                   | None                                         |
-| Segmentation (Phase 4)                         | A `targets.mask` key, a model returning `[B, K, H, W]`, Dice/mIoU bindings                          | None                                         |
-| Tile selection (Phase 4)                       | A selector node that runs before the encoder node                                                   | None                                         |
-| Pruning, quantisation (Phase 3)                | A `ModelTransform` that replaces `node.module`                                                      | None                                         |
+| Later need                                     | What is added                                                                                                                          | Phase 1 code touched                                           |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| A frozen teacher (Phase 2)                     | A second `ModelNode` with `frozen=True`                                                                                                | `ModelNode`: one keyword, a `train` override, a no-grad branch |
+| Logit KD                                       | A `KDLoss` module and one `LossBinding`                                                                                                | None                                                           |
+| Several teachers                               | More nodes with distinct names (`vit.logits`, `cnn.logits`)                                                                            | None                                                           |
+| Feature KD                                     | The model returns a dict and the node `outputs=["logits", "features"]`; a projector node wrapping `nn.Linear` reads `student.features` | None                                                           |
+| Features from a model that returns logits only | A `taps=` keyword on `ModelNode`, using forward hooks                                                                                  | `ModelNode`: one keyword                                       |
+| Deploying a multi-node student                 | A `nodes=` keyword on `deployable_model` that returns a sub-graph                                                                      | `ExecutionGraph`: one keyword                                  |
+| Cached teacher outputs                         | A node that reads `meta.sample_id` and looks up the saved outputs                                                                      | None                                                           |
+| Segmentation (Phase 4)                         | A `targets.mask` key, a model returning `[B, K, H, W]`, Dice/mIoU bindings                                                             | None                                                           |
+| Tile selection (Phase 4)                       | A selector node that runs before the encoder node                                                                                      | None                                                           |
+| Pruning, quantisation (Phase 3)                | A `ModelTransform` that replaces `node.module`                                                                                         | None                                                           |
 
 **Example: adding a teacher and KD (Phase 2).** The only change to Phase 1 code is inside `ModelNode`:
 
@@ -666,15 +667,15 @@ classDiagram
     OutputRouter ..> RunEvent : writes
 ```
 
-| Where                        | Signature                                                                             | Notes                                                                                                                                                          |
-| ---------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lwfm/results/events.py`     | `RunEvent(kind, name, value, stage=None, step=None)`                                  | `kind` ∈ `scalar, table, artifact, status, message`; `timestamp_utc` is set automatically. A one-element tensor scalar is stored as a number; any other tensor raises `TypeError`. |
-| `lwfm/results/sinks.py`      | `OutputSink` (ABC): `write(event)`, `close()`                                         | A destination; what `Trainer` and `Evaluator` accept (§3.6).                                                                                                                                                 |
-|                              | `LocalFileSink(run_dir, manifest_fields=None)`                                               | See below. Refuses a directory that already holds a run.                                                                                                       |
-|                              | `ConsoleSink(output_stream=sys.stdout)`                                                      | One line per event: `[fit step 10] train/loss/total = 0.4321`.                                                                                                 |
-|                              | `SinkError` (`RuntimeError`)                                                          | A sink failed; names the sink and the event.                                                                                                                   |
-| `lwfm/results/router.py`     | `OutputRouter(*output_sinks)`: `write(event)`, `close()`; a context manager                     | An `OutputSink` that sends every event to every sink in order.                                                                                                                      |
-| `lwfm/results/manifest.py`   | `environment()`                                                                       | Python/torch/torchvision versions, platform, CUDA device.                                               |
+| Where                      | Signature                                                                   | Notes                                                                                                                                                                              |
+| -------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lwfm/results/events.py`   | `RunEvent(kind, name, value, stage=None, step=None)`                        | `kind` ∈ `scalar, table, artifact, status, message`; `timestamp_utc` is set automatically. A one-element tensor scalar is stored as a number; any other tensor raises `TypeError`. |
+| `lwfm/results/sinks.py`    | `OutputSink` (ABC): `write(event)`, `close()`                               | A destination; what `Trainer` and `Evaluator` accept (§3.6).                                                                                                                       |
+|                            | `LocalFileSink(run_dir, manifest_fields=None)`                              | See below. Refuses a directory that already holds a run.                                                                                                                           |
+|                            | `ConsoleSink(output_stream=sys.stdout)`                                     | One line per event: `[fit step 10] train/loss/total = 0.4321`.                                                                                                                     |
+|                            | `SinkError` (`RuntimeError`)                                                | A sink failed; names the sink and the event.                                                                                                                                       |
+| `lwfm/results/router.py`   | `OutputRouter(*output_sinks)`: `write(event)`, `close()`; a context manager | An `OutputSink` that sends every event to every sink in order.                                                                                                                     |
+| `lwfm/results/manifest.py` | `environment()`                                                             | Python/torch/torchvision versions, platform, CUDA device.                                                                                                                          |
 
 **Run status.** Wrap a run in `with OutputRouter(*output_sinks) as router:`. A normal exit records `completed`; `KeyboardInterrupt` records `interrupted`; any other exception records its traceback and `failed`, then propagates. Every case closes the sinks. _Why:_ the status can't be left at `running` by a crash, and the traceback is kept (§6.4).
 
@@ -1100,7 +1101,7 @@ The resource lines are an **example**, not DCS partition, GPU or time settings; 
 | -------------------- | ------------------------------------------------ | ------------------------------------------- |
 | Core/training        | graph, bindings, trainer, checkpoints            | callbacks, resume, feature outputs          |
 | Data                 | fake data, ImageFolder, fixed splits, transforms | slide/tile/feature datasets                 |
-| Models/KD            | ResNet builder, preprocessing                   | teacher zoo, adapters, KD                   |
+| Models/KD            | ResNet builder, preprocessing                    | teacher zoo, adapters, KD                   |
 | Evaluation           | metrics, model cost benchmarks                   | challenge scores, energy, statistics        |
 | Runs/outputs         | recipe, run directories, config, CI              | Slurm sweeps, aggregation, optional tracker |
 | Compression/research | integration tests and baseline                   | pruning, quantisation, tile selection       |
@@ -1116,7 +1117,7 @@ One person owns `core/` interfaces, to avoid clashing breaking changes. Someone 
 | Over-engineering delays experiments    | Hard Phase 1 gate; later features wait for Phase 1 acceptance.                                                    |
 | ImageNet compute or data unavailable   | FakeData for CI and a small team-supplied ImageFolder subset for the real prototype; no full ImageNet-1k promise. |
 | Unfair scientific comparisons          | Frozen splits, matching transforms/precision/batch protocol, several seeds, no test leakage.                      |
-| Silent input mismatch                  | Preprocessing inside the model, preflight check and explicit names; log mean/std/size (and `mpp` when relevant).                     |
+| Silent input mismatch                  | Preprocessing inside the model, preflight check and explicit names; log mean/std/size (and `mpp` when relevant).  |
 | A frozen teacher gets trained          | Tests: no gradients, still in eval mode after `graph.train()`.                                                    |
 | Quantisation brings no speed-up        | Measure real backend timings; label simulation separately.                                                        |
 | A compressed model can't be reloaded   | Keep architecture and transform history with each artifact; reload test for every stage.                          |
