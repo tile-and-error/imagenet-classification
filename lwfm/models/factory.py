@@ -44,10 +44,9 @@ def build_model(config: dict[str, Any]) -> ModelNode:
     if len(preprocessing) == 0:
         model = base_model
     else:
+        model_with_preprocessing = build_preprocessing(preprocessing) + [base_model]
         model = nn.Sequential(
-            OrderedDict(
-                build_preprocessing(preprocessing) + base_model
-                )
+            *model_with_preprocessing
         )
 
     model_node = ModelNode(
