@@ -40,7 +40,7 @@ class Experiment:
             run_id,
             Path.cwd(),
             pipeline,
-            Trainer(),
+            build_trainer(config.training),
             Evaluator(),
             OutputRouter(build_routers(config.outputs, experiment_name, time_utc, run_id)),
             time_utc
@@ -50,6 +50,17 @@ class Experiment:
 
     def run(self):
         self.recipe.execute(self.context)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Safely close the experiment
+        context = getattr(self, "context", None)
+        output_router = getattr(context, "output_router", None)
+
+        if output_router is not None:
+            output_router.close()
+
+def build_trainer(config):
+    return Trainer()
 
 def build_routers(outputs, experiment_name, time_utc, run_id):
     for i in range(len(outputs["sinks"])):

@@ -21,6 +21,13 @@ class FitStage(Stage):
     name = "fit"
 
     def execute(self, ctx: RunContext) -> StageResult:
+        # Load the execution Graph
+        graph = ctx.execution_graph
+        # Call Trainer
+        
+        # Save Checkpoint
+        # Record Output
+        # Make Model Available
         pass
 
 class EvaluateStage(Stage):
