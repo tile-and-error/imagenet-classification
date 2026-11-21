@@ -1,0 +1,4 @@
+id: "gpu_default"
+partition: "falcon,gecko"
+cpus-per-task: 12
+gpus: 1

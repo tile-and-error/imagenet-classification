@@ -43,3 +43,4 @@ _download/
 
 # Ignore model runs
 runs/
+configs/devices/
