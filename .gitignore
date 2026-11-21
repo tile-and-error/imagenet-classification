@@ -40,3 +40,6 @@ data/
 _download/
 
 .DS_Store/
+
+# Ignore model runs
+runs/
