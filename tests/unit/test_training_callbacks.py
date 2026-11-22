@@ -118,7 +118,7 @@ def test_loss_weight_schedule_rejects_an_unknown_binding():
 # --- EarlyStopping --------------------------------------------------------------
 
 
-def test_early_stopping_after_patience_validations_without_improvement():
+def test_early_stopping_after_max_validations_without_improvement():
     # The metric never changes: validation 1 sets the best, 2 and 3 don't improve
     _, graph, loss, optimizer = setup()
     result = Trainer(device="cpu", max_epochs=10).fit(
@@ -128,14 +128,16 @@ def test_early_stopping_after_patience_validations_without_improvement():
         optimizer,
         val_loader=batches(1),
         metrics=constant_metric(),
-        callbacks=[EarlyStopping("const", patience=2)],
+        callbacks=[EarlyStopping("const", max_validations_without_improvement=2)],
     )
     assert (result.stop_reason, result.epochs_completed) == ("stopped", 3)
 
 
 def test_early_stopping_counts_from_the_last_improvement():
     _, graph, loss, optimizer = setup()
-    stopper = EarlyStopping("top1", patience=2, min_delta=0.05)
+    stopper = EarlyStopping(
+        "top1", max_validations_without_improvement=2, min_delta=0.05
+    )
     state = bare_state(graph, loss, optimizer)
     stopper.on_fit_start(state)
     for value in (0.5, 0.52, 0.6, 0.61):  # 0.52 and 0.61 are within min_delta
@@ -146,7 +148,7 @@ def test_early_stopping_counts_from_the_last_improvement():
 
 
 @pytest.mark.parametrize("with_validation", [True, False])
-def test_monitor_must_be_a_validation_metric(with_validation):
+def test_monitored_metric_must_be_a_validation_metric(with_validation):
     _, graph, loss, optimizer = setup()
     validation = (
         {"val_loader": batches(1), "metrics": constant_metric()}
@@ -165,7 +167,7 @@ def test_monitor_must_be_a_validation_metric(with_validation):
 
 
 @pytest.mark.parametrize(
-    ("value", "best", "mode", "min_delta", "expected"),
+    ("value", "best", "goal", "min_delta", "expected"),
     [
         (0.5, None, "max", 0.0, True),  # the first value always counts as better
         (0.6, 0.5, "max", 0.0, True),
@@ -176,23 +178,30 @@ def test_monitor_must_be_a_validation_metric(with_validation):
         (0.47, 0.5, "min", 0.05, False),
     ],
 )
-def test_improved(value, best, mode, min_delta, expected):
-    assert improved(value, best, mode, min_delta) is expected
+def test_improved(value, best, goal, min_delta, expected):
+    assert improved(value, best, goal, min_delta) is expected
 
 
-def test_mode_must_be_max_or_min(tmp_path):
+def test_goal_must_be_max_or_min(tmp_path):
     with pytest.raises(ValueError, match="'max' or 'min'"):
-        EarlyStopping("top1", mode="maximum")  # type: ignore[arg-type]  # deliberate
+        EarlyStopping("top1", goal="maximum")  # type: ignore[arg-type]  # deliberate
     with pytest.raises(ValueError, match="'max' or 'min'"):
-        ModelCheckpoint(tmp_path, monitor="top1", mode="maximum")  # type: ignore[arg-type]
+        ModelCheckpoint(
+            tmp_path,
+            node="student",
+            monitored_metric="top1",
+            goal="maximum",  # type: ignore[arg-type]
+        )
 
 
 def test_callbacks_start_afresh_in_every_fit(tmp_path):
     # The same callback instances in two fits. Each fit must reset them: otherwise
     # the second fit inherits the first's best value, stops one validation early
     # and never saves best.pt.
-    stopper = EarlyStopping("const", patience=1)
-    checkpoint = ModelCheckpoint(tmp_path, monitor="const", save_last=False)
+    stopper = EarlyStopping("const", max_validations_without_improvement=1)
+    checkpoint = ModelCheckpoint(
+        tmp_path, node="student", monitored_metric="const", save_last=False
+    )
     for _ in range(2):
         _, graph, loss, optimizer = setup()
         sink = ListSink()
@@ -219,7 +228,7 @@ def test_callbacks_start_afresh_in_every_fit(tmp_path):
 def test_checkpoint_saves_best_only_on_improvement(tmp_path):
     node, graph, loss, optimizer = setup()
     sink = ListSink()
-    checkpoint = ModelCheckpoint(tmp_path, node="student", monitor="top1")
+    checkpoint = ModelCheckpoint(tmp_path, node="student", monitored_metric="top1")
     state = bare_state(graph, loss, optimizer, sink)
     checkpoint.on_fit_start(state)
     for step, value in [(1, 0.5), (2, 0.4), (3, 0.6)]:
@@ -238,7 +247,9 @@ def test_checkpoint_saves_best_only_on_improvement(tmp_path):
 
 def test_checkpoint_last_holds_the_full_training_state(tmp_path):
     _, graph, loss, optimizer = setup()
-    checkpoint = ModelCheckpoint(tmp_path)  # no monitor: last.pt only
+    checkpoint = ModelCheckpoint(
+        tmp_path, node="student"
+    )  # no monitored metric: last.pt only
     state = bare_state(graph, loss, optimizer)
     state.global_step, state.epoch = 7, 2
     checkpoint.on_fit_start(state)
@@ -261,17 +272,19 @@ def test_checkpoint_last_holds_the_full_training_state(tmp_path):
 
 def test_checkpoint_without_save_last_writes_no_last(tmp_path):
     _, graph, loss, optimizer = setup()
-    checkpoint = ModelCheckpoint(tmp_path, save_last=False)
+    checkpoint = ModelCheckpoint(tmp_path, node="student", save_last=False)
     state = bare_state(graph, loss, optimizer)
     checkpoint.on_fit_start(state)
     checkpoint.on_fit_end(state, TrainingResult(0, 0, "max_steps", []))
     assert not (tmp_path / "checkpoints/last.pt").exists()
 
 
-def test_checkpoint_mode_min_saves_when_the_metric_falls(tmp_path):
+def test_checkpoint_goal_min_saves_when_the_metric_falls(tmp_path):
     _, graph, loss, optimizer = setup()
     sink = ListSink()
-    checkpoint = ModelCheckpoint(tmp_path, monitor="loss", mode="min")
+    checkpoint = ModelCheckpoint(
+        tmp_path, node="student", monitored_metric="loss", goal="min"
+    )
     state = bare_state(graph, loss, optimizer, sink, metric_names=("loss",))
     checkpoint.on_fit_start(state)
     for step, value in enumerate([1.0, 0.5, 0.7, 0.4], start=1):
@@ -290,7 +303,9 @@ def test_checkpoint_in_a_real_run_records_artifacts(tmp_path):
             optimizer,
             val_loader=batches(1),
             metrics=constant_metric(),
-            callbacks=[ModelCheckpoint(tmp_path, monitor="const")],
+            callbacks=[
+                ModelCheckpoint(tmp_path, node="student", monitored_metric="const")
+            ],
             output_sink=sink,
         )
     events = [json.loads(line) for line in (tmp_path / "events.jsonl").open()]

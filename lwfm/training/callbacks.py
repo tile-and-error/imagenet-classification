@@ -66,12 +66,12 @@ def check_callbacks(callbacks: Sequence[Callback]) -> None:
 def improved(
     value: float,
     best: float | None,
-    mode: Literal["max", "min"],
+    goal: Literal["max", "min"],
     min_delta: float = 0.0,
 ) -> bool:
     if best is None:
         return True
-    return value > best + min_delta if mode == "max" else value < best - min_delta
+    return value > best + min_delta if goal == "max" else value < best - min_delta
 
 
 def require_metric(callback: Callback, metric: str, state: "TrainingState") -> None:
@@ -83,17 +83,17 @@ def require_metric(callback: Callback, metric: str, state: "TrainingState") -> N
         )
 
 
-def check_mode(mode: str) -> None:
-    if mode not in ("max", "min"):
-        raise ValueError(f"mode must be 'max' or 'min', got {mode!r}")
+def check_goal(goal: str) -> None:
+    if goal not in ("max", "min"):
+        raise ValueError(f"goal must be 'max' or 'min', got {goal!r}")
 
 
 class LossWeightSchedule(Callback):
-    """Sets a loss binding's weight to `schedule(global_step)` before every batch,
+    """Sets a loss binding's weight to `weight_at_step(global_step)` before every batch,
     e.g. to ramp a distillation term in from 0."""
 
-    def __init__(self, binding_name: str, schedule: Callable[[int], float]):
-        self.binding_name, self.schedule = binding_name, schedule
+    def __init__(self, binding_name: str, weight_at_step: Callable[[int], float]):
+        self.binding_name, self.weight_at_step = binding_name, weight_at_step
         self.binding: LossBinding | None = None
 
     def on_fit_start(self, state: "TrainingState") -> None:
@@ -106,46 +106,48 @@ class LossWeightSchedule(Callback):
         # Changing a binding's float weight is safe: LossComposer reads it on every
         # call. (Swapping its loss module is not; see lwfm/core/losses.py.)
         assert self.binding is not None
-        self.binding.weight = self.schedule(state.global_step)
+        self.binding.weight = self.weight_at_step(state.global_step)
 
 
 class EarlyStopping(Callback):
-    """Stops training once `monitor` has failed to improve by more than `min_delta`
-    for `patience` validations in a row."""
+    """Stops training once `monitored_metric` has failed to improve by more than
+    `min_delta` for `max_validations_without_improvement` validations in a row."""
 
     def __init__(
         self,
-        monitor: str,
-        mode: Literal["max", "min"] = "max",
-        patience: int = 5,
+        monitored_metric: str,
+        goal: Literal["max", "min"] = "max",
+        max_validations_without_improvement: int = 5,
         min_delta: float = 0.0,
     ):
-        check_mode(mode)
-        self.monitor = monitor
-        self.mode: Literal["max", "min"] = mode
-        self.patience, self.min_delta = patience, min_delta
+        check_goal(goal)
+        self.monitored_metric = monitored_metric
+        self.goal: Literal["max", "min"] = goal
+        self.max_validations_without_improvement = max_validations_without_improvement
+        self.min_delta = min_delta
         self.best: float | None = None
         self.validations_without_improvement = 0
 
     def on_fit_start(self, state: "TrainingState") -> None:
-        require_metric(self, self.monitor, state)
+        require_metric(self, self.monitored_metric, state)
         self.best, self.validations_without_improvement = None, 0
 
     def on_validation_end(
         self, state: "TrainingState", metrics: dict[str, float]
     ) -> None:
-        value = metrics[self.monitor]
-        if improved(value, self.best, self.mode, self.min_delta):
+        value = metrics[self.monitored_metric]
+        if improved(value, self.best, self.goal, self.min_delta):
             self.best, self.validations_without_improvement = value, 0
             return
         self.validations_without_improvement += 1
-        if self.validations_without_improvement >= self.patience:
+        limit = self.max_validations_without_improvement
+        if self.validations_without_improvement >= limit:
             state.should_stop = True
 
 
 class ModelCheckpoint(Callback):
-    """Saves one node's weights as `best.pt` whenever `monitor` improves (only if a
-    monitor is given), and the full training state as `last.pt` when fit ends,
+    """Saves one node's weights as `best.pt` whenever `monitored_metric` improves
+    (only if one is given), and the full training state as `last.pt` when fit ends,
     including after Ctrl-C or a crash (check `result.stop_reason` to tell).
 
     Files go in `run_dir/subdir`. Each save is written atomically, then announced as
@@ -156,16 +158,16 @@ class ModelCheckpoint(Callback):
     def __init__(
         self,
         run_dir: str | Path,
-        node: str = "student",
-        monitor: str | None = None,
-        mode: Literal["max", "min"] = "max",
+        node: str,
+        monitored_metric: str | None = None,
+        goal: Literal["max", "min"] = "max",
         subdir: str = "checkpoints",
         save_last: bool = True,
     ):
-        check_mode(mode)
+        check_goal(goal)
         self.run_dir = Path(run_dir)
-        self.node, self.monitor = node, monitor
-        self.mode: Literal["max", "min"] = mode
+        self.node, self.monitored_metric = node, monitored_metric
+        self.goal: Literal["max", "min"] = goal
         self.save_last = save_last
         self.best_path = self.run_dir / subdir / "best.pt"
         self.last_path = self.run_dir / subdir / "last.pt"
@@ -177,18 +179,18 @@ class ModelCheckpoint(Callback):
                 f"ModelCheckpoint saves node {self.node!r}, but the graph has "
                 f"{list(state.graph.nodes)}"
             )
-        if self.monitor is not None:
-            require_metric(self, self.monitor, state)
+        if self.monitored_metric is not None:
+            require_metric(self, self.monitored_metric, state)
         self.best_path.parent.mkdir(parents=True, exist_ok=True)
         self.best_value = None
 
     def on_validation_end(
         self, state: "TrainingState", metrics: dict[str, float]
     ) -> None:
-        if self.monitor is None:
+        if self.monitored_metric is None:
             return
-        value = metrics[self.monitor]
-        if improved(value, self.best_value, self.mode):
+        value = metrics[self.monitored_metric]
+        if improved(value, self.best_value, self.goal):
             self.best_value = value
             # The deployable module only: no teachers, no training-only projectors
             weights = state.graph.deployable_model(self.node).state_dict()
@@ -219,42 +221,50 @@ class ModelCheckpoint(Callback):
 
 class EMAUpdate(Callback):
     """After every optimizer step, moves the `target` node's weights towards the
-    `source` node's: target ← m·target + (1 − m)·source.
+    `source` node's: target <- m * target + (1 - m) * source.
 
     For mean-teacher or DINO-style self-distillation, where the target is a frozen
     copy of the source. Buffers (e.g. BatchNorm statistics) are copied, not averaged.
     """
 
-    def __init__(self, source: str, target: str, momentum: float = 0.996):
+    def __init__(self, student_name: str, teacher_name: str, momentum: float = 0.996):
         if not 0.0 <= momentum <= 1.0:
             raise ValueError(f"momentum must be in [0, 1], got {momentum}")
-        self.source, self.target, self.momentum = source, target, momentum
+        self.student_name, self.teacher_name, self.momentum = (
+            student_name,
+            teacher_name,
+            momentum,
+        )
 
     def on_fit_start(self, state: "TrainingState") -> None:
         source, target = self._modules(state)
         source_shapes = [p.shape for p in source.parameters()]
         if source_shapes != [p.shape for p in target.parameters()]:
             raise ValueError(
-                f"EMAUpdate needs {self.source!r} and {self.target!r} to have the same "
-                "architecture, but their parameter shapes differ"
+                f"EMAUpdate needs {self.student_name!r} and {self.teacher_name!r} to "
+                + "have the same architecture, but their parameter shapes differ"
             )
 
     @torch.no_grad()
     def on_after_optimizer_step(self, state: "TrainingState") -> None:
-        source, target = self._modules(state)
+        student, teacher = self._modules(state)
         for p_target, p_source in zip(
-            target.parameters(), source.parameters(), strict=True
+            teacher.parameters(), student.parameters(), strict=True
         ):
-            # lerp_: target + (1 − m)(source − target) = m·target + (1 − m)·source
+            # lerp_: t + (1 - m) * (s - t) = m * t + (1 - m) * s
             p_target.lerp_(p_source, 1.0 - self.momentum)
-        for b_target, b_source in zip(target.buffers(), source.buffers(), strict=True):
+        for b_target, b_source in zip(
+            teacher.buffers(), student.buffers(), strict=True
+        ):
             b_target.copy_(b_source)
 
     def _modules(
         self, state: "TrainingState"
     ) -> tuple[torch.nn.Module, torch.nn.Module]:
-        for name in (self.source, self.target):
+        for name in (self.student_name, self.teacher_name):
             if name not in state.graph.nodes:
                 raise ValueError(f"EMAUpdate: the graph has no node {name!r}")
         graph = state.graph
-        return graph.deployable_model(self.source), graph.deployable_model(self.target)
+        return graph.deployable_model(self.student_name), graph.deployable_model(
+            self.teacher_name
+        )

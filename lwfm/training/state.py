@@ -50,7 +50,7 @@ class TrainingState:
     scheduler_interval: SchedulerInterval | None = None
     output_sink: OutputSink | None = None
     callbacks: Sequence["Callback"] = ()
-    # Names of the validation metrics, so callbacks can check a monitor before training
+    # Names of the validation metrics, so callbacks can check theirs before training
     metric_names: tuple[str, ...] = ()
     global_step: int = 0
     epoch: int = 0
@@ -97,11 +97,11 @@ class TrainingResult:
     history: History
 
     def best(
-        self, metric: str, mode: Literal["max", "min"] = "max"
+        self, metric: str, goal: Literal["max", "min"] = "max"
     ) -> dict[str, float]:
         """The validation with the best `metric`, plus the step it ran at."""
         if not self.history:
             raise ValueError("no validation ran, so there is no best result")
-        pick = max if mode == "max" else min
+        pick = max if goal == "max" else min
         step, values = pick(self.history, key=lambda entry: entry[1][metric])
         return values | {"step": step}

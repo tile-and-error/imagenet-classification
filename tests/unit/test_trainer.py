@@ -293,11 +293,11 @@ def test_plateau_scheduler_steps_from_a_callback():
     # by the trainer. The metric never changes, so with patience 0 every validation
     # after the first halves the learning rate.
     class Plateau(Callback):
-        def __init__(self, scheduler, monitor):
-            self.scheduler, self.monitor = scheduler, monitor
+        def __init__(self, scheduler, monitored_metric):
+            self.scheduler, self.monitored_metric = scheduler, monitored_metric
 
         def on_validation_end(self, state, metrics):
-            self.scheduler.step(metrics[self.monitor])
+            self.scheduler.step(metrics[self.monitored_metric])
 
     _, graph, loss, optimizer = setup(lr=1.0)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -533,7 +533,7 @@ def test_best_picks_the_best_validation():
     history = [(1, {"top1": 0.2, "loss": 3.0}), (2, {"top1": 0.6, "loss": 1.0})]
     result = TrainingResult(2, 2, "max_epochs", history)
     assert result.best("top1") == {"top1": 0.6, "loss": 1.0, "step": 2}
-    assert result.best("loss", mode="min")["step"] == 2
+    assert result.best("loss", goal="min")["step"] == 2
     with pytest.raises(ValueError, match="no validation"):
         TrainingResult(0, 0, "max_steps", []).best("top1")
 
