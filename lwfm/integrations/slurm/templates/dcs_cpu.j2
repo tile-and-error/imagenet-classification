@@ -18,4 +18,4 @@ source /etc/profile.d/conda.sh
 module load CUDA
 
 python3.14 -m pip install --user {{largepath}}
-python3.14 -m {{largepath}}/lwfm.run --config /dcs/large/tileanderror/{{experiment}}
+python3.14 -m {{largepath}}/lwfm.run --config {{largepath}}/{{experiment}}
