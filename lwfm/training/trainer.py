@@ -56,16 +56,18 @@ class Trainer:
     ):
         if max_epochs is None and max_steps is None:
             raise ValueError("set max_epochs, max_steps or both")
-        counts = {
+        counting_settings = {
             "max_epochs": max_epochs,
             "max_steps": max_steps,
             "val_every_n_steps": val_every_n_steps,
             "accumulate_grad_batches": accumulate_grad_batches,
             "log_every_n_steps": log_every_n_steps,
         }
-        for name, value in counts.items():
-            if value is not None and value < 1:
-                raise ValueError(f"{name} must be at least 1, got {value}")
+        for setting_name, setting_value in counting_settings.items():
+            if setting_value is not None and setting_value < 1:
+                raise ValueError(
+                    f"{setting_name} must be at least 1, got {setting_value}"
+                )
         if precision not in AUTOCAST_DTYPES:
             raise ValueError(f"precision must be one of {list(AUTOCAST_DTYPES)}")
         if gradient_clip_norm is not None and gradient_clip_norm <= 0:
@@ -94,6 +96,7 @@ class Trainer:
         callbacks: Sequence[Callback] = (),
         output_sink: OutputSink | None = None,
     ) -> TrainingResult:
+        """Trains until a stopping condition is met, then returns the result."""
         # Every check runs before the first batch, so a mistake costs seconds, not a run
         check_reads(graph, loss, metrics)
         check_validation(val_loader, metrics)
@@ -124,27 +127,29 @@ class Trainer:
         state.emit("on_fit_start")
         try:
             while not self._should_stop(state):
-                completed = self._run_epoch(
+                epoch_completed = self._run_epoch(
                     state, train_loader, val_loader, metrics, history
                 )
-                if completed and val_loader is not None and not self.val_every_n_steps:
+                validate_per_epoch = not self.val_every_n_steps
+                if epoch_completed and val_loader is not None and validate_per_epoch:
                     self._validate(state, val_loader, metrics, history)
             # End on a validation result, unless the last step was just validated
-            if val_loader is not None and (
-                not history or history[-1][0] != state.global_step
-            ):
+            last_step_validated = bool(history) and history[-1][0] == state.global_step
+            if val_loader is not None and not last_step_validated:
                 self._validate(state, val_loader, metrics, history)
         except (KeyboardInterrupt, Exception) as error:
             # Ctrl-C or a crash: callbacks still get on_fit_end (so "last" is saved),
             # then the original error propagates, for OutputRouter to record. A
             # callback failing here is attached as a note, never hiding the error.
-            reason = "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
+            stop_reason = (
+                "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
+            )
             try:
-                state.emit("on_fit_end", self._result(state, history, reason))
+                state.emit("on_fit_end", self._make_result(state, history, stop_reason))
             except Exception as hook_error:
                 error.add_note(f"on_fit_end also failed: {hook_error!r}")
             raise
-        result = self._result(state, history, self._stop_reason(state))
+        result = self._make_result(state, history, self._stop_reason(state))
         state.emit("on_fit_end", result)
         return result
 
@@ -160,45 +165,46 @@ class Trainer:
         in which case the epoch isn't counted."""
         state.emit("on_epoch_start")
         state.graph.train()  # frozen nodes (teachers) stay in eval mode
-        started, batches = time.perf_counter(), 0
-        for batch, is_last in mark_last(train_loader):
-            batches += 1
-            state.is_last_batch = is_last
+        epoch_start_time, batch_count = time.perf_counter(), 0
+        for batch, is_last_batch in mark_last_batch(train_loader):
+            batch_count += 1
+            state.is_last_batch = is_last_batch
             state.accumulated += 1
             batch = to_device(batch, self.device)
 
             state.emit("on_step_start", batch)
-            output = self.step_fn(state, batch)
+            step_output = self.step_fn(state, batch)
             self._check_step_used_helpers(state)
-            stepped = state.is_accumulation_boundary
-            if stepped:
+            optimizer_stepped = state.is_accumulation_boundary
+            if optimizer_stepped:
                 state.accumulated = 0
                 if state.scheduler is not None and state.scheduler_interval == "step":
                     state.scheduler.step()
                 state.global_step += 1
-            state.emit("on_step_end", output)
-            if not stepped:
+            state.emit("on_step_end", step_output)
+            if not optimizer_stepped:
                 continue
 
             # Logging, validation and stopping happen only at optimizer steps, so no
             # half-accumulated gradient is ever dropped
             if state.global_step % self.log_every_n_steps == 0:
-                self._log_step(state, output)
-            if (
-                val_loader is not None
-                and self.val_every_n_steps
+                self._log_step(state, step_output)
+            validation_due = (
+                self.val_every_n_steps is not None
                 and state.global_step % self.val_every_n_steps == 0
-            ):
+            )
+            if val_loader is not None and validation_due:
                 self._validate(state, val_loader, metrics, history)
-            if self._should_stop(state) and not is_last:
+            if self._should_stop(state) and not is_last_batch:
                 return False
-        if batches == 0:
+        if batch_count == 0:
             raise ValueError("train_loader yielded no batches")
 
         if state.scheduler is not None and state.scheduler_interval == "epoch":
             state.scheduler.step()
         state.epoch += 1
-        self._write(state, "train/epoch_seconds", time.perf_counter() - started)
+        epoch_seconds = time.perf_counter() - epoch_start_time
+        self._write_scalar(state, "train/epoch_seconds", epoch_seconds)
         state.emit("on_epoch_end")
         return True
 
@@ -209,8 +215,9 @@ class Trainer:
         metrics: Sequence[MetricBinding],
         history: History,
     ) -> None:
+        """Runs the metrics over `val_loader`, records them, and tells the callbacks."""
         # The Evaluator logs eval/val/<metric> and restores the graph's train mode
-        result = Evaluator().evaluate(
+        evaluation = Evaluator().evaluate(
             state.graph,
             val_loader,
             metrics,
@@ -218,74 +225,83 @@ class Trainer:
             output_sink=state.output_sink,
             training_step=state.global_step,
         )
-        values = result.metric_values
-        state.last_val_metrics = values
-        history.append((state.global_step, values))
-        state.emit("on_validation_end", values)
+        val_metrics = evaluation.metric_values
+        state.last_val_metrics = val_metrics
+        history.append((state.global_step, val_metrics))
+        state.emit("on_validation_end", val_metrics)
 
     def _check_step_used_helpers(self, state: TrainingState) -> None:
+        """Refuses a custom step that bypassed `steps.backward` when it matters."""
         # A step that calls .backward() itself skips fp16 loss scaling and the 1/k
         # accumulation scaling, so its gradients would be silently wrong
-        needs_helpers = self.precision == "fp16" or self.accumulate_grad_batches > 1
-        if needs_helpers and not state.used_backward_helper:
+        helpers_required = self.precision == "fp16" or self.accumulate_grad_batches > 1
+        if helpers_required and not state.used_backward_helper:
             raise RuntimeError(
                 "with precision='fp16' or accumulate_grad_batches > 1, a custom "
                 "step_fn must call lwfm.training.steps.backward(state, loss) and, "
                 "when state.is_accumulation_boundary, optimizer_step(state)"
             )
 
-    def _log_step(self, state: TrainingState, output: StepOutput) -> None:
+    def _log_step(self, state: TrainingState, step_output: StepOutput) -> None:
+        """Writes each loss term, the total loss and the learning rate(s)."""
         # The losses of the batch that completed this optimizer step
-        for name, value in output.loss_terms.items():
-            self._write(state, f"train/loss/{name}", value)
-        self._write(state, "train/loss/total", output.total_loss)
-        groups = state.optimizer.param_groups
-        for index, group in enumerate(groups):
-            name = "train/lr" if len(groups) == 1 else f"train/lr/{index}"
-            self._write(state, name, group["lr"])
+        for term_name, term_value in step_output.loss_terms.items():
+            self._write_scalar(state, f"train/loss/{term_name}", term_value)
+        self._write_scalar(state, "train/loss/total", step_output.total_loss)
+        param_groups = state.optimizer.param_groups
+        for group_index, param_group in enumerate(param_groups):
+            event_name = (
+                "train/lr" if len(param_groups) == 1 else f"train/lr/{group_index}"
+            )
+            self._write_scalar(state, event_name, param_group["lr"])
 
-    def _write(self, state: TrainingState, name: str, value: float | Tensor) -> None:
+    def _write_scalar(
+        self, state: TrainingState, name: str, value: float | Tensor
+    ) -> None:
+        """Sends one scalar to the output sink, if there is one."""
         if state.output_sink is not None:
             state.output_sink.write(
                 RunEvent("scalar", name, value, step=state.global_step)
             )
 
     def _should_stop(self, state: TrainingState) -> bool:
-        return self._stop_reason(state) != "max_epochs" or (
-            self.max_epochs is not None and state.epoch >= self.max_epochs
-        )
+        """True once a callback asked to stop, or a step or epoch limit is reached."""
+        steps_done = self.max_steps is not None and state.global_step >= self.max_steps
+        epochs_done = self.max_epochs is not None and state.epoch >= self.max_epochs
+        return state.should_stop or steps_done or epochs_done
 
     def _stop_reason(self, state: TrainingState) -> StopReason:
-        # "max_epochs" doubles as "keep going" while the epoch limit isn't reached
+        """Why training ended; called only once the loop has finished."""
         if state.should_stop:
             return "stopped"
         if self.max_steps is not None and state.global_step >= self.max_steps:
             return "max_steps"
         return "max_epochs"
 
-    def _result(
+    def _make_result(
         self, state: TrainingState, history: History, stop_reason: StopReason
     ) -> TrainingResult:
         return TrainingResult(state.global_step, state.epoch, stop_reason, history)
 
 
-def mark_last(batches: Iterable[Batch]) -> Iterator[tuple[Batch, bool]]:
-    """Yields (batch, is_last). Looking one batch ahead is how the loop knows an epoch
-    is ending, which works for loaders without len()."""
-    iterator = iter(batches)
+def mark_last_batch(batches: Iterable[Batch]) -> Iterator[tuple[Batch, bool]]:
+    """Yields (batch, is_last_batch). Looking one batch ahead is how the loop knows an
+    epoch is ending, which works for loaders without len()."""
+    batch_iterator = iter(batches)
     try:
-        current = next(iterator)
+        current_batch = next(batch_iterator)
     except StopIteration:
         return
-    for upcoming in iterator:
-        yield current, False
-        current = upcoming
-    yield current, True
+    for next_batch in batch_iterator:
+        yield current_batch, False
+        current_batch = next_batch
+    yield current_batch, True
 
 
 def check_reads(
     graph: ExecutionGraph, loss: LossComposer, metrics: Sequence[MetricBinding]
 ) -> None:
+    """Checks that every name a loss or metric reads is produced by the graph."""
     # A typo in a loss or metric name fails here, listing the outputs that do exist
     graph.check_reads(name for binding in loss.loss_bindings for name in binding.inputs)
     graph.check_reads(name for binding in metrics for name in binding.inputs)
@@ -294,6 +310,7 @@ def check_reads(
 def check_validation(
     val_loader: Iterable[Batch] | None, metrics: Sequence[MetricBinding]
 ) -> None:
+    """Checks that `val_loader` and `metrics` are given together or not at all."""
     if (val_loader is None) != (len(metrics) == 0):
         raise ValueError(
             "pass val_loader and metrics together: one is useless without the other"
@@ -303,30 +320,37 @@ def check_validation(
 def check_optimizer(
     graph: ExecutionGraph, loss: LossComposer, optimizer: torch.optim.Optimizer
 ) -> None:
-    # Every trainable parameter must be in the optimizer, e.g. a distillation
-    # projector, which would otherwise silently stay at its random init
-    in_optimizer = {id(p) for group in optimizer.param_groups for p in group["params"]}
-    missing = [
-        name
+    """Checks that every trainable parameter of the graph and loss is optimised."""
+    # e.g. a distillation projector, which would otherwise silently stay at its
+    # random init
+    optimised_param_ids = {
+        id(param) for group in optimizer.param_groups for param in group["params"]
+    }
+    missing_param_names = [
+        param_name
         for module in (graph, loss)
-        for name, p in module.named_parameters()
-        if p.requires_grad and id(p) not in in_optimizer
+        for param_name, param in module.named_parameters()
+        if param.requires_grad and id(param) not in optimised_param_ids
     ]
-    if missing:
-        raise ValueError(f"trainable parameters missing from the optimizer: {missing}")
+    if missing_param_names:
+        raise ValueError(
+            f"trainable parameters missing from the optimizer: {missing_param_names}"
+        )
 
 
 def check_scheduler(
     scheduler: LRScheduler | None,
-    interval: SchedulerInterval | None,
+    scheduler_interval: SchedulerInterval | None,
     optimizer: torch.optim.Optimizer,
 ) -> None:
+    """Checks that a scheduler has an interval, matches the optimizer, and can be
+    stepped without a metric."""
     if scheduler is None:
-        if interval is not None:
+        if scheduler_interval is not None:
             raise ValueError("scheduler_interval given without a scheduler")
         return
     # No default: per step and per epoch differ by a factor of the epoch length
-    if interval not in ("step", "epoch"):
+    if scheduler_interval not in ("step", "epoch"):
         raise ValueError("pass scheduler_interval='step' or 'epoch' with a scheduler")
     if scheduler.optimizer is not optimizer:
         raise ValueError("the scheduler was built for a different optimizer")
