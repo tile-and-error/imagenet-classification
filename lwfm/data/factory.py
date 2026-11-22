@@ -1,6 +1,7 @@
 from lwfm.data.fakeclassification import FakeClassificationDataModule
 
 def build_data_module(config):
+    """Convert the YAML data config into an instance of a DataModule"""
     data_registry = {
         "fake_classification": FakeClassificationDataModule,
     }

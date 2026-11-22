@@ -1,6 +1,7 @@
 import torch 
 
 def classification_collate(samples):
+    """Collate multiple classification samples into a single batch"""
     return {
         "inputs": {
             "image": torch.stack([
