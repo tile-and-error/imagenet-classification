@@ -1,5 +1,6 @@
 from torch import nn
 from torchmetrics.classification import MulticlassAccuracy
+from lwfm.evaluation.metrics import MetricBinding
 
 METRICS = {
     "cross_entropy": nn.CrossEntropyLoss,
@@ -15,3 +16,12 @@ def build_metric(metric):
     return METRICS[metric_type](
         **metric.get("kwargs", {})
     )
+
+def build_metric_binding(config):
+    metrics = [MetricBinding(
+        metric_config["name"],
+        build_metric(metric_config),
+        metric_config["inputs"]
+    ) for metric_config in config]
+
+    return metrics

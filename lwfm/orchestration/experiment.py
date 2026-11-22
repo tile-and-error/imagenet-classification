@@ -13,6 +13,8 @@ from lwfm.results.router import OutputRouter
 from lwfm.results.sinks import ConsoleSink, LocalFileSink
 from lwfm.evaluation.evaluator import Evaluator
 from lwfm.training.trainer import Trainer
+from lwfm.core.losses import LossComposer
+from lwfm.data.modules import DataModule
 
 class Experiment:
     def __init__(
@@ -40,9 +42,11 @@ class Experiment:
             run_id,
             Path.cwd(),
             pipeline,
-            build_trainer(config.training),
+            build_trainer(config.training, config.device),
             Evaluator(),
             OutputRouter(build_routers(config.outputs, experiment_name, time_utc, run_id)),
+            DataModule(),
+            LossComposer(),
             time_utc
         )
 
@@ -59,8 +63,12 @@ class Experiment:
         if output_router is not None:
             output_router.close()
 
-def build_trainer(config):
-    return Trainer()
+def build_trainer(config, device):
+    return Trainer(
+        device=device,
+        max_epochs=config["max_epochs"],
+        max_steps=config["max_steps"],
+    )
 
 def build_routers(outputs, experiment_name, time_utc, run_id):
     for i in range(len(outputs["sinks"])):

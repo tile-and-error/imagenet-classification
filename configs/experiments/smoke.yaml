@@ -43,8 +43,11 @@ metrics:
     average: micro
 training:
   optimizer: { name: sgd, lr: 0.01 }
-  epochs: 1
+  max_epochs: 1
   max_steps: 2
+  scheduler: 
+    name: cosine_annealing_lr
+    interval: step
 recipe:
   stages:
     - { name: fit, type: fit }
@@ -53,3 +56,5 @@ recipe:
 outputs:
   root: runs
   sinks: [local, console]
+deployment:
+  node: student

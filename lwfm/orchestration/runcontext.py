@@ -7,6 +7,8 @@ from lwfm.core.graph import ExecutionGraph
 from lwfm.results.router import OutputRouter
 from lwfm.training.trainer import Trainer
 from lwfm.evaluation.evaluator import Evaluator
+from lwfm.data.modules import DataModule
+from lwfm.core.losses import LossComposer
 
 @dataclass
 class RunContext:
@@ -19,5 +21,7 @@ class RunContext:
     evaluator: Evaluator
 
     output_router: OutputRouter
+    data_module: DataModule
+    loss_composer: LossComposer
 
     started_at: datetime
