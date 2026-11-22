@@ -30,6 +30,7 @@ class FitStage(Stage):
         # Load the execution Graph
         graph = ctx.execution_graph
         # Call Trainer
+        ctx.data_module.setup("fit")
         train_loader = ctx.data_module.train_dataloader()
         loss = ctx.loss_composer
         optimizer = build_optimizer(
@@ -89,8 +90,10 @@ class EvaluateStage(Stage):
         metric_bindings = build_metric_binding(ctx.config.metrics)
 
         if self.split == "val":
+            ctx.data_module.setup("val")
             loader = ctx.data_module.val_dataloader()
         elif self.split == "test":
+            ctx.data_module.setup("test")
             loader = ctx.data_module.test_dataloader()
         else:
             raise ValueError(f"Incorrect split {self.split}")

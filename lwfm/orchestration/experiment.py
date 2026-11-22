@@ -14,7 +14,7 @@ from lwfm.results.sinks import ConsoleSink, LocalFileSink
 from lwfm.evaluation.evaluator import Evaluator
 from lwfm.training.trainer import Trainer
 from lwfm.core.losses import LossComposer
-from lwfm.data.modules import DataModule
+from lwfm.data.factory import build_data_module
 
 class Experiment:
     def __init__(
@@ -45,7 +45,7 @@ class Experiment:
             build_trainer(config.training, config.device),
             Evaluator(),
             OutputRouter(build_routers(config.outputs, experiment_name, time_utc, run_id)),
-            DataModule(),
+            build_data_module(config.data),
             LossComposer(),
             time_utc
         )
