@@ -13,6 +13,7 @@ skipped, so running it again carries on where a stopped job left off.
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import time
@@ -167,7 +168,11 @@ def setup(mode: str) -> Ctx:
     split = make_split(
         DATASET, keep=NAMED, num_other=NUM_OTHER, train_fraction=0.7, exist_ok=True
     ).name
-    data = SplitData(DATASET, split, workers=0 if mode == "smoke" else 8)
+    # One loader worker per CPU the job was given, less one for the main process.
+    # sched_getaffinity follows Slurm's --cpus-per-task; macOS doesn't have it.
+    cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else 8
+    workers = 0 if mode == "smoke" else max(1, cpus - 1)
+    data = SplitData(DATASET, split, workers=workers)
     root = RUNS if mode == "full" else RUNS / mode  # modes never mix their runs
     runs = root / data.name
     report = runs / "report"
@@ -193,7 +198,7 @@ def setup(mode: str) -> Ctx:
     )
     gpu = f" ({torch.cuda.get_device_name()})" if device.type == "cuda" else ""
     print(f"mode:      {mode}")
-    print(f"device:    {device}{gpu}")
+    print(f"device:    {device}{gpu}, {workers} data-loader workers")
     print(f"split:     {split}")
     print(f"students:  {', '.join(STUDENTS_TO_RUN)}   teacher: {TEACHER}")
     epochs = [replace(b, **(overrides or {})).epochs for b in budgets]  # as trained
