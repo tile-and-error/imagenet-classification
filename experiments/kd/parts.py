@@ -395,11 +395,15 @@ class DinoV2WithEmbed(nn.Module):
         self.net = net
 
     def forward(self, x: Tensor) -> dict[str, Tensor]:
-        f = self.net.backbone.forward_features(x)
-        embed = f["x_norm_clstoken"]
-        # The linear head reads the class token and the mean patch token
-        head_in = torch.cat([embed, f["x_norm_patchtokens"].mean(1)], dim=1)
-        return {"logits": self.net.linear_head(head_in), "embed": embed}
+        # As the hub wrapper's forward: the head reads the class tokens of the last
+        # `layers` blocks (4 for _lc) and the last block's mean patch token, so its
+        # input is (4 + 1) * 768 = 3840. The last class token is the embedding.
+        out = self.net.backbone.get_intermediate_layers(
+            x, n=self.net.layers, return_class_token=True
+        )
+        cls = [c for _, c in out]
+        head_in = torch.cat([*cls, out[-1][0].mean(1)], dim=1)
+        return {"logits": self.net.linear_head(head_in), "embed": cls[-1]}
 
 
 class ToStudentClasses(nn.Module):
