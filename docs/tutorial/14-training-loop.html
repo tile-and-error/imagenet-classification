@@ -57,14 +57,15 @@ result = trainer.fit(
     output_sink=ConsoleSink(),                               # lwfm: print every event (slide 9)
 )
 result.best(&quot;top1&quot;)                                          # lwfm: the best validation, and its step</code></pre>
-<pre class="output">[step 20] train/loss/ce = 0.4182
+<pre class="output">[step 0] trainer/settings = {'device': 'cpu', 'precision': 'fp32', 'max_epochs': 3, ...}   # once (slide 18)
+[step 20] train/loss/ce = 0.4182
 [step 20] train/loss/total = 0.4182
 [step 20] train/lr = 0.075
 [step 20] train/epoch_seconds = 0.003355
 [step 20] eval/val/top1 = 0.9
 ...                                       # the same five lines at steps 40 and 60
 {'top1': 0.8999999761581421, 'step': 20}</pre>
-<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">CosineAnnealingLR</code> — any <code class="t">torch.optim.lr_scheduler</code> works; the trainer only calls <code>scheduler.step()</code>.</li><li><code class="t">MulticlassAccuracy</code> — any torchmetrics metric, bound to names as on slide 6.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">val_loader</code> + <code class="l">metrics</code> — always passed together; validation goes through the same <code class="l">Evaluator</code> as slide 7.</li><li><code class="l">scheduler_interval</code> — <code>"step"</code> (after each optimizer step) or <code>"epoch"</code>. <code class="t">ReduceLROnPlateau</code> needs a metric, so it is stepped from a callback's <code>on_validation_end</code>.</li><li><code class="l">output_sink</code> — receives <code>train/loss/*</code>, <code>train/lr</code>, <code>train/epoch_seconds</code> and <code>eval/val/*</code>. With no sink, nothing is written.</li></ul></div></div>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">CosineAnnealingLR</code> — any <code class="t">torch.optim.lr_scheduler</code> works; the trainer only calls <code>scheduler.step()</code>.</li><li><code class="t">MulticlassAccuracy</code> — any torchmetrics metric, bound to names as on slide 6.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">val_loader</code> + <code class="l">metrics</code> — always passed together; validation goes through the same <code class="l">Evaluator</code> as slide 7.</li><li><code class="l">scheduler_interval</code> — <code>"step"</code> (after each optimizer step) or <code>"epoch"</code>. <code class="t">ReduceLROnPlateau</code> needs a metric, so it is stepped from a callback's <code>on_validation_end</code>.</li><li><code class="l">output_sink</code> — receives <code>trainer/settings</code> once, then <code>train/loss/*</code>, <code>train/lr</code>, <code>train/epoch_seconds</code> and <code>eval/val/*</code>. With no sink, nothing is written.</li></ul></div></div>
 <div class="why"><strong>Why must scheduler_interval be given?</strong> A schedule stepped per batch and the same schedule stepped per epoch differ by a factor of the epoch length. A default would silently change results when code is copied from elsewhere, so you always say which one you mean.</div>
 
 </main>

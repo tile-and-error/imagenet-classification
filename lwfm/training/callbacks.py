@@ -32,6 +32,39 @@ class Callback:
     Every hook does nothing by default, so a callback overrides only the hooks it
     needs, and adding a hook later breaks no callback. `Trainer.fit` rejects any
     other `on_*` method, so a misspelled hook fails instead of silently never running.
+
+    +----------------------------------------------------------------------------------+
+    | FIT   one call to trainer.fit(...)                                               |
+    |   - on_fit_start                                                                 |
+    |   +----------------------------------------------------------------------------+ |
+    |   | EPOCH   repeats until max_epochs, max_steps or state.should_stop           | |
+    |   |   - on_epoch_start                                                         | |
+    |   |   +----------------------------------------------------------------------+ | |
+    |   |   | BATCH   repeats for each batch of train_loader                       | | |
+    |   |   |   - on_step_start(batch)                                             | | |
+    |   |   |   - on_after_backward                                                | | |
+    |   |   |   +----------------------------------------------------------------+ | | |
+    |   |   |   | OPTIMIZER STEP   only at an accumulation boundary              | | | |
+    |   |   |   |   - on_after_optimizer_step                                    | | | |
+    |   |   |   +----------------------------------------------------------------+ | | |
+    |   |   |   - on_step_end(output)                                              | | |
+    |   |   |   +----------------------------------------------------------------+ | | |
+    |   |   |   | VALIDATION   at a boundary, every val_every_n_steps (if set)   | | | |
+    |   |   |   |   - on_validation_end(metrics)                                 | | | |
+    |   |   |   +----------------------------------------------------------------+ | | |
+    |   |   +----------------------------------------------------------------------+ | |
+    |   |   - on_epoch_end            (skipped if training stopped mid-epoch)        | |
+    |   |   +----------------------------------------------------------------------+ | |
+    |   |   | VALIDATION   after the epoch, if val_every_n_steps is unset          | | |
+    |   |   |   - on_validation_end(metrics)                                       | | |
+    |   |   +----------------------------------------------------------------------+ | |
+    |   +----------------------------------------------------------------------------+ |
+    |   +----------------------------------------------------------------------------+ |
+    |   | FINAL VALIDATION   unless the last step was just validated                 | |
+    |   |   - on_validation_end(metrics)                                             | |
+    |   +----------------------------------------------------------------------------+ |
+    |   - on_fit_end(result)      (also on Ctrl-C or a crash, before re-raising)       |
+    +----------------------------------------------------------------------------------+
     """
 
     def on_fit_start(self, state: "TrainingState") -> None: ...

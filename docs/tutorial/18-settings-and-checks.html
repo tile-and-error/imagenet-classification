@@ -52,6 +52,7 @@ best_top1</code></pre>
   <tr><td><code>val_every_n_steps</code>, <code>log_every_n_steps</code></td><td>how often to validate and log</td></tr>
   <tr><td><code>step_fn</code></td><td>replace what one step computes; the rest of the loop stays</td></tr>
 </table>
+<p class="muted">With an <code>output_sink</code>, <code>fit</code> records these settings, plus the optimizer's hyperparameters, the scheduler, the callbacks and the torch seed, as one <code>trainer/settings</code> event at step 0, so every run says how it was trained.</p>
 
 <h3>Mistakes fail before training starts</h3>
 <pre class="code"><code class="language-python">projector = ModelNode(&quot;projector&quot;, nn.Linear(K, K), inputs=&quot;student.logits&quot;, outputs=&quot;z&quot;)

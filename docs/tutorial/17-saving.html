@@ -31,13 +31,14 @@ with OutputRouter(LocalFileSink(run_dir)) as sink:         # lwfm: fit inside, s
     Trainer(device=&quot;cpu&quot;, max_epochs=3).fit(
         graph, train_loader, loss, optimizer,
         val_loader=val_loader, metrics=metrics,
-        callbacks=[ModelCheckpoint(run_dir, node=&quot;student&quot;, monitor=&quot;top1&quot;)],  # lwfm
+        callbacks=[ModelCheckpoint(run_dir, node=&quot;student&quot;, monitored_metric=&quot;top1&quot;)],  # lwfm
         output_sink=sink,
     )</code></pre>
-<pre class="output">['checkpoints', 'checkpoints/best.pt', 'checkpoints/last.pt', 'events.jsonl',
- 'manifest.json', 'status.json', 'summary.json']
+<pre class="output">['checkpoints', 'checkpoints/best.pt', 'checkpoints/last.pt', 'checkpoints/last_weights.pt',
+ 'events.jsonl', 'manifest.json', 'status.json', 'summary.json']
 checkpoint/best -> checkpoints/best.pt at step 20       # the artifact events in events.jsonl
-checkpoint/last -> checkpoints/last.pt at step 60</pre>
+checkpoint/last -> checkpoints/last.pt at step 60
+checkpoint/last_weights -> checkpoints/last_weights.pt at step 60</pre>
 <pre class="mermaid">sequenceDiagram
     participant T as Trainer (lwfm)
     participant C as ModelCheckpoint (lwfm)
@@ -49,8 +50,9 @@ checkpoint/last -> checkpoints/last.pt at step 60</pre>
     C->>S: RunEvent("artifact", "checkpoint/best", "checkpoints/best.pt")</pre>
 <table>
   <tr><th>File</th><th>Holds</th><th>Written</th></tr>
-  <tr><td><code>checkpoints/best.pt</code></td><td>the student's weights only (<code>deployable_model("student").state_dict()</code>)</td><td>whenever <code>monitor</code> improves; only if a monitor is given</td></tr>
-  <tr><td><code>checkpoints/last.pt</code></td><td>the full training state: graph, optimizer, scheduler, counters</td><td>when training ends, including after Ctrl-C</td></tr>
+  <tr><td><code>checkpoints/best.pt</code></td><td>the student's weights only (<code>deployable_model("student").state_dict()</code>)</td><td>whenever <code>monitored_metric</code> improves; only if one is given</td></tr>
+  <tr><td><code>checkpoints/last_weights.pt</code></td><td>the student's final weights only, in the same form as <code>best.pt</code></td><td>when training ends, including after Ctrl-C</td></tr>
+  <tr><td><code>checkpoints/last.pt</code></td><td>the full training state: graph, optimizer, scheduler, counters (for resuming)</td><td>when training ends, including after Ctrl-C</td></tr>
 </table>
 
 <h3>Loading the model back</h3>
@@ -59,8 +61,8 @@ weights = torch.load(run_dir / &quot;checkpoints/best.pt&quot;, weights_only=Tru
 restored.module.load_state_dict(weights)                   # torch: from here on, a plain nn.Module
 Evaluator().evaluate(ExecutionGraph([restored]), val_loader, metrics, device=torch.device(&quot;cpu&quot;))</code></pre>
 <pre class="output">EvaluationResult(metric_values={'top1': 0.8999999761581421})   # the best validation score, as saved</pre>
-<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">state_dict()</code> / <code class="t">torch.save</code> — the weights as a dict of tensors, in a file.</li><li><code class="t">torch.load(..., weights_only=True)</code> — loads tensors only, never code, so a checkpoint can't run anything.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">ModelCheckpoint(run_dir, node, monitor=None, mode="max")</code> — the run directory, which node to save, and which metric decides "best".</li><li><strong>Paths are relative</strong> to the run directory, so a run folder can be moved without breaking its records.</li></ul></div></div>
-<div class="why"><strong>Why?</strong> A file plus an event keeps the record small and readable, and lets each sink decide what an artifact means: the console prints it, and a future MLflow sink could upload it. Only the student is saved as "best": that is the model we ship and benchmark. To compare runs at a fixed schedule, leave <code>monitor</code> unset and keep the final weights, so every run stops at the same point.</div>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">state_dict()</code> / <code class="t">torch.save</code> — the weights as a dict of tensors, in a file.</li><li><code class="t">torch.load(..., weights_only=True)</code> — loads tensors only, never code, so a checkpoint can't run anything.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">ModelCheckpoint(run_dir, node, monitored_metric=None, goal="max")</code> — the run directory, which node to save, and which metric decides "best". <code>save_last=False</code> skips the two end-of-run files.</li><li><strong>Paths are relative</strong> to the run directory, so a run folder can be moved without breaking its records.</li></ul></div></div>
+<div class="why"><strong>Why?</strong> A file plus an event keeps the record small and readable, and lets each sink decide what an artifact means: the console prints it, and a future MLflow sink could upload it. Only the student is saved as "best": that is the model we ship and benchmark. To compare runs at a fixed schedule, leave <code>monitored_metric</code> unset and use <code>last_weights.pt</code>, so every run stops at the same point.</div>
 
 </main>
 <nav class="pager"><a rel="prev" href="16-distillation.html">← 16. Distillation</a><a rel="next" href="18-settings-and-checks.html">18. Settings, sweeps and checks →</a></nav>
