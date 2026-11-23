@@ -24,7 +24,7 @@ module load CUDA
 
 ## Execute your program(s) ##
 cd /dcs/23/u5507039/cs407/imagenet-classification
-python3.14 -m pip install --user -r requirements.txt   # quick once installed
+source .venv/bin/activate   # the venv made in setup, with requirements.txt installed
 
 # -u: print straight away rather than buffered. --mode full stops at once without a GPU.
-python3.14 -u experiments/kd/py_kd_e0_e3.py --mode full
+python -u experiments/kd/py_kd_e0_e3.py --mode full
