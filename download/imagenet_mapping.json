@@ -1,0 +1,1002 @@
+{
+  "000": {
+    "wnid": "n01443537",
+    "name": "goldfish, Carassius auratus",
+    "imagenet_1k": 1
+  },
+  "001": {
+    "wnid": "n01629819",
+    "name": "European fire salamander, Salamandra salamandra",
+    "imagenet_1k": 25
+  },
+  "002": {
+    "wnid": "n01641577",
+    "name": "bullfrog, Rana catesbeiana",
+    "imagenet_1k": 30
+  },
+  "003": {
+    "wnid": "n01644900",
+    "name": "tailed frog, bell toad, ribbed toad, tailed toad, Ascaphus trui",
+    "imagenet_1k": 32
+  },
+  "004": {
+    "wnid": "n01698640",
+    "name": "American alligator, Alligator mississipiensis",
+    "imagenet_1k": 50
+  },
+  "005": {
+    "wnid": "n01742172",
+    "name": "boa constrictor, Constrictor constrictor",
+    "imagenet_1k": 61
+  },
+  "006": {
+    "wnid": "n01768244",
+    "name": "trilobite",
+    "imagenet_1k": 69
+  },
+  "007": {
+    "wnid": "n01770393",
+    "name": "scorpion",
+    "imagenet_1k": 71
+  },
+  "008": {
+    "wnid": "n01774384",
+    "name": "black widow, Latrodectus mactans",
+    "imagenet_1k": 75
+  },
+  "009": {
+    "wnid": "n01774750",
+    "name": "tarantula",
+    "imagenet_1k": 76
+  },
+  "010": {
+    "wnid": "n01784675",
+    "name": "centipede",
+    "imagenet_1k": 79
+  },
+  "011": {
+    "wnid": "n01882714",
+    "name": "koala, koala bear, kangaroo bear, native bear, Phascolarctos cinereus",
+    "imagenet_1k": 105
+  },
+  "012": {
+    "wnid": "n01910747",
+    "name": "jellyfish",
+    "imagenet_1k": 107
+  },
+  "013": {
+    "wnid": "n01917289",
+    "name": "brain coral",
+    "imagenet_1k": 109
+  },
+  "014": {
+    "wnid": "n01944390",
+    "name": "snail",
+    "imagenet_1k": 113
+  },
+  "015": {
+    "wnid": "n01950731",
+    "name": "sea slug, nudibranch",
+    "imagenet_1k": 115
+  },
+  "016": {
+    "wnid": "n01983481",
+    "name": "American lobster, Northern lobster, Maine lobster, Homarus americanus",
+    "imagenet_1k": 122
+  },
+  "017": {
+    "wnid": "n01984695",
+    "name": "spiny lobster, langouste, rock lobster, crawfish, crayfish, sea crawfish",
+    "imagenet_1k": 123
+  },
+  "018": {
+    "wnid": "n02002724",
+    "name": "black stork, Ciconia nigra",
+    "imagenet_1k": 128
+  },
+  "019": {
+    "wnid": "n02056570",
+    "name": "king penguin, Aptenodytes patagonica",
+    "imagenet_1k": 145
+  },
+  "020": {
+    "wnid": "n02058221",
+    "name": "albatross, mollymawk",
+    "imagenet_1k": 146
+  },
+  "021": {
+    "wnid": "n02074367",
+    "name": "dugong, Dugong dugon",
+    "imagenet_1k": 149
+  },
+  "022": {
+    "wnid": "n02094433",
+    "name": "Yorkshire terrier",
+    "imagenet_1k": 187
+  },
+  "023": {
+    "wnid": "n02099601",
+    "name": "golden retriever",
+    "imagenet_1k": 207
+  },
+  "024": {
+    "wnid": "n02099712",
+    "name": "Labrador retriever",
+    "imagenet_1k": 208
+  },
+  "025": {
+    "wnid": "n02106662",
+    "name": "German shepherd, German shepherd dog, German police dog, alsatian",
+    "imagenet_1k": 235
+  },
+  "026": {
+    "wnid": "n02113799",
+    "name": "standard poodle",
+    "imagenet_1k": 267
+  },
+  "027": {
+    "wnid": "n02123045",
+    "name": "tabby, tabby cat",
+    "imagenet_1k": 281
+  },
+  "028": {
+    "wnid": "n02123394",
+    "name": "Persian cat",
+    "imagenet_1k": 283
+  },
+  "029": {
+    "wnid": "n02124075",
+    "name": "Egyptian cat",
+    "imagenet_1k": 285
+  },
+  "030": {
+    "wnid": "n02125311",
+    "name": "cougar, puma, catamount, mountain lion, painter, panther, Felis concolor",
+    "imagenet_1k": 286
+  },
+  "031": {
+    "wnid": "n02129165",
+    "name": "lion, king of beasts, Panthera leo",
+    "imagenet_1k": 291
+  },
+  "032": {
+    "wnid": "n02132136",
+    "name": "brown bear, bruin, Ursus arctos",
+    "imagenet_1k": 294
+  },
+  "033": {
+    "wnid": "n02165456",
+    "name": "ladybug, ladybeetle, lady beetle, ladybird, ladybird beetle",
+    "imagenet_1k": 301
+  },
+  "034": {
+    "wnid": "n02226429",
+    "name": "grasshopper, hopper",
+    "imagenet_1k": 311
+  },
+  "035": {
+    "wnid": "n02231487",
+    "name": "walking stick, walkingstick, stick insect",
+    "imagenet_1k": 313
+  },
+  "036": {
+    "wnid": "n02233338",
+    "name": "cockroach, roach",
+    "imagenet_1k": 314
+  },
+  "037": {
+    "wnid": "n02236044",
+    "name": "mantis, mantid",
+    "imagenet_1k": 315
+  },
+  "038": {
+    "wnid": "n02268443",
+    "name": "dragonfly, darning needle, devil's darning needle, sewing needle, snake feeder, snake doctor, mosquito hawk, skeeter hawk",
+    "imagenet_1k": 319
+  },
+  "039": {
+    "wnid": "n02279972",
+    "name": "monarch, monarch butterfly, milkweed butterfly, Danaus plexippus",
+    "imagenet_1k": 323
+  },
+  "040": {
+    "wnid": "n02281406",
+    "name": "sulphur butterfly, sulfur butterfly",
+    "imagenet_1k": 325
+  },
+  "041": {
+    "wnid": "n02321529",
+    "name": "sea cucumber, holothurian",
+    "imagenet_1k": 329
+  },
+  "042": {
+    "wnid": "n02364673",
+    "name": "guinea pig, Cavia cobaya",
+    "imagenet_1k": 338
+  },
+  "043": {
+    "wnid": "n02395406",
+    "name": "hog, pig, grunter, squealer, Sus scrofa",
+    "imagenet_1k": 341
+  },
+  "044": {
+    "wnid": "n02403003",
+    "name": "ox",
+    "imagenet_1k": 345
+  },
+  "045": {
+    "wnid": "n02410509",
+    "name": "bison",
+    "imagenet_1k": 347
+  },
+  "046": {
+    "wnid": "n02415577",
+    "name": "bighorn, bighorn sheep, cimarron, Rocky Mountain bighorn, Rocky Mountain sheep, Ovis canadensis",
+    "imagenet_1k": 349
+  },
+  "047": {
+    "wnid": "n02423022",
+    "name": "gazelle",
+    "imagenet_1k": 353
+  },
+  "048": {
+    "wnid": "n02437312",
+    "name": "Arabian camel, dromedary, Camelus dromedarius",
+    "imagenet_1k": 354
+  },
+  "049": {
+    "wnid": "n02480495",
+    "name": "orangutan, orang, orangutang, Pongo pygmaeus",
+    "imagenet_1k": 365
+  },
+  "050": {
+    "wnid": "n02481823",
+    "name": "chimpanzee, chimp, Pan troglodytes",
+    "imagenet_1k": 367
+  },
+  "051": {
+    "wnid": "n02486410",
+    "name": "baboon",
+    "imagenet_1k": 372
+  },
+  "052": {
+    "wnid": "n02504458",
+    "name": "African elephant, Loxodonta africana",
+    "imagenet_1k": 386
+  },
+  "053": {
+    "wnid": "n02509815",
+    "name": "lesser panda, red panda, panda, bear cat, cat bear, Ailurus fulgens",
+    "imagenet_1k": 387
+  },
+  "054": {
+    "wnid": "n02666347",
+    "name": "abacus",
+    "imagenet_1k": null
+  },
+  "055": {
+    "wnid": "n02669723",
+    "name": "academic gown, academic robe, judge's robe",
+    "imagenet_1k": 400
+  },
+  "056": {
+    "wnid": "n02699494",
+    "name": "altar",
+    "imagenet_1k": 406
+  },
+  "057": {
+    "wnid": "n02769748",
+    "name": "backpack, back pack, knapsack, packsack, rucksack, haversack",
+    "imagenet_1k": 414
+  },
+  "058": {
+    "wnid": "n02788148",
+    "name": "bannister, banister, balustrade, balusters, handrail",
+    "imagenet_1k": 421
+  },
+  "059": {
+    "wnid": "n02791270",
+    "name": "barbershop",
+    "imagenet_1k": 424
+  },
+  "060": {
+    "wnid": "n02793495",
+    "name": "barn",
+    "imagenet_1k": 425
+  },
+  "061": {
+    "wnid": "n02795169",
+    "name": "barrel, cask",
+    "imagenet_1k": 427
+  },
+  "062": {
+    "wnid": "n02802426",
+    "name": "basketball",
+    "imagenet_1k": 430
+  },
+  "063": {
+    "wnid": "n02808440",
+    "name": "bathtub, bathing tub, bath, tub",
+    "imagenet_1k": 435
+  },
+  "064": {
+    "wnid": "n02814533",
+    "name": "beach wagon, station wagon, wagon, estate car, beach waggon, station waggon, waggon",
+    "imagenet_1k": 436
+  },
+  "065": {
+    "wnid": "n02814860",
+    "name": "beacon, lighthouse, beacon light, pharos",
+    "imagenet_1k": 437
+  },
+  "066": {
+    "wnid": "n02815834",
+    "name": "beaker",
+    "imagenet_1k": 438
+  },
+  "067": {
+    "wnid": "n02823428",
+    "name": "beer bottle",
+    "imagenet_1k": 440
+  },
+  "068": {
+    "wnid": "n02837789",
+    "name": "bikini, two-piece",
+    "imagenet_1k": 445
+  },
+  "069": {
+    "wnid": "n02841315",
+    "name": "binoculars, field glasses, opera glasses",
+    "imagenet_1k": 447
+  },
+  "070": {
+    "wnid": "n02843684",
+    "name": "birdhouse",
+    "imagenet_1k": 448
+  },
+  "071": {
+    "wnid": "n02883205",
+    "name": "bow tie, bow-tie, bowtie",
+    "imagenet_1k": 457
+  },
+  "072": {
+    "wnid": "n02892201",
+    "name": "brass, memorial tablet, plaque",
+    "imagenet_1k": 458
+  },
+  "073": {
+    "wnid": "n02909870",
+    "name": "bucket, pail",
+    "imagenet_1k": 463
+  },
+  "074": {
+    "wnid": "n02917067",
+    "name": "bullet train, bullet",
+    "imagenet_1k": 466
+  },
+  "075": {
+    "wnid": "n02927161",
+    "name": "butcher shop, meat market",
+    "imagenet_1k": 467
+  },
+  "076": {
+    "wnid": "n02948072",
+    "name": "candle, taper, wax light",
+    "imagenet_1k": 470
+  },
+  "077": {
+    "wnid": "n02950826",
+    "name": "cannon",
+    "imagenet_1k": 471
+  },
+  "078": {
+    "wnid": "n02963159",
+    "name": "cardigan",
+    "imagenet_1k": 474
+  },
+  "079": {
+    "wnid": "n02977058",
+    "name": "cash machine, cash dispenser, automated teller machine, automatic teller machine, automated teller, automatic teller, ATM",
+    "imagenet_1k": 480
+  },
+  "080": {
+    "wnid": "n02988304",
+    "name": "CD player",
+    "imagenet_1k": 485
+  },
+  "081": {
+    "wnid": "n03014705",
+    "name": "chest",
+    "imagenet_1k": 492
+  },
+  "082": {
+    "wnid": "n03026506",
+    "name": "Christmas stocking",
+    "imagenet_1k": 496
+  },
+  "083": {
+    "wnid": "n03042490",
+    "name": "cliff dwelling",
+    "imagenet_1k": 500
+  },
+  "084": {
+    "wnid": "n03085013",
+    "name": "computer keyboard, keypad",
+    "imagenet_1k": 508
+  },
+  "085": {
+    "wnid": "n03089624",
+    "name": "confectionery, confectionary, candy store",
+    "imagenet_1k": 509
+  },
+  "086": {
+    "wnid": "n03100240",
+    "name": "convertible",
+    "imagenet_1k": 511
+  },
+  "087": {
+    "wnid": "n03126707",
+    "name": "crane",
+    "imagenet_1k": 517
+  },
+  "088": {
+    "wnid": "n03160309",
+    "name": "dam, dike, dyke",
+    "imagenet_1k": 525
+  },
+  "089": {
+    "wnid": "n03179701",
+    "name": "desk",
+    "imagenet_1k": 526
+  },
+  "090": {
+    "wnid": "n03201208",
+    "name": "dining table, board",
+    "imagenet_1k": 532
+  },
+  "091": {
+    "wnid": "n03255030",
+    "name": "dumbbell",
+    "imagenet_1k": 543
+  },
+  "092": {
+    "wnid": "n03355925",
+    "name": "flagpole, flagstaff",
+    "imagenet_1k": 557
+  },
+  "093": {
+    "wnid": "n03373237",
+    "name": "fly",
+    "imagenet_1k": null
+  },
+  "094": {
+    "wnid": "n03388043",
+    "name": "fountain",
+    "imagenet_1k": 562
+  },
+  "095": {
+    "wnid": "n03393912",
+    "name": "freight car",
+    "imagenet_1k": 565
+  },
+  "096": {
+    "wnid": "n03400231",
+    "name": "frying pan, frypan, skillet",
+    "imagenet_1k": 567
+  },
+  "097": {
+    "wnid": "n03404251",
+    "name": "fur coat",
+    "imagenet_1k": 568
+  },
+  "098": {
+    "wnid": "n03424325",
+    "name": "gasmask, respirator, gas helmet",
+    "imagenet_1k": 570
+  },
+  "099": {
+    "wnid": "n03444034",
+    "name": "go-kart",
+    "imagenet_1k": 573
+  },
+  "100": {
+    "wnid": "n03447447",
+    "name": "gondola",
+    "imagenet_1k": 576
+  },
+  "101": {
+    "wnid": "n03544143",
+    "name": "hourglass",
+    "imagenet_1k": 604
+  },
+  "102": {
+    "wnid": "n03584254",
+    "name": "iPod",
+    "imagenet_1k": 605
+  },
+  "103": {
+    "wnid": "n03599486",
+    "name": "jinrikisha, ricksha, rickshaw",
+    "imagenet_1k": 612
+  },
+  "104": {
+    "wnid": "n03617480",
+    "name": "kimono",
+    "imagenet_1k": 614
+  },
+  "105": {
+    "wnid": "n03637318",
+    "name": "lampshade, lamp shade",
+    "imagenet_1k": 619
+  },
+  "106": {
+    "wnid": "n03649909",
+    "name": "lawn mower, mower",
+    "imagenet_1k": 621
+  },
+  "107": {
+    "wnid": "n03662601",
+    "name": "lifeboat",
+    "imagenet_1k": 625
+  },
+  "108": {
+    "wnid": "n03670208",
+    "name": "limousine, limo",
+    "imagenet_1k": 627
+  },
+  "109": {
+    "wnid": "n03706229",
+    "name": "magnetic compass",
+    "imagenet_1k": 635
+  },
+  "110": {
+    "wnid": "n03733131",
+    "name": "maypole",
+    "imagenet_1k": 645
+  },
+  "111": {
+    "wnid": "n03763968",
+    "name": "military uniform",
+    "imagenet_1k": 652
+  },
+  "112": {
+    "wnid": "n03770439",
+    "name": "miniskirt, mini",
+    "imagenet_1k": 655
+  },
+  "113": {
+    "wnid": "n03796401",
+    "name": "moving van",
+    "imagenet_1k": 675
+  },
+  "114": {
+    "wnid": "n03814639",
+    "name": "neck brace",
+    "imagenet_1k": 678
+  },
+  "115": {
+    "wnid": "n03837869",
+    "name": "obelisk",
+    "imagenet_1k": 682
+  },
+  "116": {
+    "wnid": "n03838899",
+    "name": "oboe, hautboy, hautbois",
+    "imagenet_1k": 683
+  },
+  "117": {
+    "wnid": "n03854065",
+    "name": "organ, pipe organ",
+    "imagenet_1k": 687
+  },
+  "118": {
+    "wnid": "n03891332",
+    "name": "parking meter",
+    "imagenet_1k": 704
+  },
+  "119": {
+    "wnid": "n03902125",
+    "name": "pay-phone, pay-station",
+    "imagenet_1k": 707
+  },
+  "120": {
+    "wnid": "n03930313",
+    "name": "picket fence, paling",
+    "imagenet_1k": 716
+  },
+  "121": {
+    "wnid": "n03937543",
+    "name": "pill bottle",
+    "imagenet_1k": 720
+  },
+  "122": {
+    "wnid": "n03970156",
+    "name": "plunger, plumber's helper",
+    "imagenet_1k": 731
+  },
+  "123": {
+    "wnid": "n03977966",
+    "name": "police van, police wagon, paddy wagon, patrol wagon, wagon, black Maria",
+    "imagenet_1k": 734
+  },
+  "124": {
+    "wnid": "n03980874",
+    "name": "poncho",
+    "imagenet_1k": 735
+  },
+  "125": {
+    "wnid": "n03983396",
+    "name": "pop bottle, soda bottle",
+    "imagenet_1k": 737
+  },
+  "126": {
+    "wnid": "n03992509",
+    "name": "potter's wheel",
+    "imagenet_1k": 739
+  },
+  "127": {
+    "wnid": "n04008634",
+    "name": "projectile, missile",
+    "imagenet_1k": 744
+  },
+  "128": {
+    "wnid": "n04023962",
+    "name": "punching bag, punch bag, punching ball, punchball",
+    "imagenet_1k": 747
+  },
+  "129": {
+    "wnid": "n04070727",
+    "name": "refrigerator, icebox",
+    "imagenet_1k": 760
+  },
+  "130": {
+    "wnid": "n04074963",
+    "name": "remote control, remote",
+    "imagenet_1k": 761
+  },
+  "131": {
+    "wnid": "n04099969",
+    "name": "rocking chair, rocker",
+    "imagenet_1k": 765
+  },
+  "132": {
+    "wnid": "n04118538",
+    "name": "rugby ball",
+    "imagenet_1k": 768
+  },
+  "133": {
+    "wnid": "n04133789",
+    "name": "sandal",
+    "imagenet_1k": 774
+  },
+  "134": {
+    "wnid": "n04146614",
+    "name": "school bus",
+    "imagenet_1k": 779
+  },
+  "135": {
+    "wnid": "n04149813",
+    "name": "scoreboard",
+    "imagenet_1k": 781
+  },
+  "136": {
+    "wnid": "n04179913",
+    "name": "sewing machine",
+    "imagenet_1k": 786
+  },
+  "137": {
+    "wnid": "n04251144",
+    "name": "snorkel",
+    "imagenet_1k": 801
+  },
+  "138": {
+    "wnid": "n04254777",
+    "name": "sock",
+    "imagenet_1k": 806
+  },
+  "139": {
+    "wnid": "n04259630",
+    "name": "sombrero",
+    "imagenet_1k": 808
+  },
+  "140": {
+    "wnid": "n04265275",
+    "name": "space heater",
+    "imagenet_1k": 811
+  },
+  "141": {
+    "wnid": "n04275548",
+    "name": "spider web, spider's web",
+    "imagenet_1k": 815
+  },
+  "142": {
+    "wnid": "n04285008",
+    "name": "sports car, sport car",
+    "imagenet_1k": 817
+  },
+  "143": {
+    "wnid": "n04311004",
+    "name": "steel arch bridge",
+    "imagenet_1k": 821
+  },
+  "144": {
+    "wnid": "n04328186",
+    "name": "stopwatch, stop watch",
+    "imagenet_1k": 826
+  },
+  "145": {
+    "wnid": "n04356056",
+    "name": "sunglasses, dark glasses, shades",
+    "imagenet_1k": 837
+  },
+  "146": {
+    "wnid": "n04366367",
+    "name": "suspension bridge",
+    "imagenet_1k": 839
+  },
+  "147": {
+    "wnid": "n04371430",
+    "name": "swimming trunks, bathing trunks",
+    "imagenet_1k": 842
+  },
+  "148": {
+    "wnid": "n04376876",
+    "name": "syringe",
+    "imagenet_1k": 845
+  },
+  "149": {
+    "wnid": "n04398044",
+    "name": "teapot",
+    "imagenet_1k": 849
+  },
+  "150": {
+    "wnid": "n04399382",
+    "name": "teddy, teddy bear",
+    "imagenet_1k": 850
+  },
+  "151": {
+    "wnid": "n04417672",
+    "name": "thatch, thatched roof",
+    "imagenet_1k": 853
+  },
+  "152": {
+    "wnid": "n04456115",
+    "name": "torch",
+    "imagenet_1k": 862
+  },
+  "153": {
+    "wnid": "n04465666",
+    "name": "tractor",
+    "imagenet_1k": null
+  },
+  "154": {
+    "wnid": "n04486054",
+    "name": "triumphal arch",
+    "imagenet_1k": 873
+  },
+  "155": {
+    "wnid": "n04487081",
+    "name": "trolleybus, trolley coach, trackless trolley",
+    "imagenet_1k": 874
+  },
+  "156": {
+    "wnid": "n04501370",
+    "name": "turnstile",
+    "imagenet_1k": 877
+  },
+  "157": {
+    "wnid": "n04507155",
+    "name": "umbrella",
+    "imagenet_1k": 879
+  },
+  "158": {
+    "wnid": "n04532106",
+    "name": "vestment",
+    "imagenet_1k": 887
+  },
+  "159": {
+    "wnid": "n04532670",
+    "name": "viaduct",
+    "imagenet_1k": 888
+  },
+  "160": {
+    "wnid": "n04540053",
+    "name": "volleyball",
+    "imagenet_1k": 890
+  },
+  "161": {
+    "wnid": "n04560804",
+    "name": "water jug",
+    "imagenet_1k": 899
+  },
+  "162": {
+    "wnid": "n04562935",
+    "name": "water tower",
+    "imagenet_1k": 900
+  },
+  "163": {
+    "wnid": "n04596742",
+    "name": "wok",
+    "imagenet_1k": 909
+  },
+  "164": {
+    "wnid": "n04598010",
+    "name": "wooden spoon",
+    "imagenet_1k": null
+  },
+  "165": {
+    "wnid": "n06596364",
+    "name": "comic book",
+    "imagenet_1k": 917
+  },
+  "166": {
+    "wnid": "n07056680",
+    "name": "reel",
+    "imagenet_1k": null
+  },
+  "167": {
+    "wnid": "n07583066",
+    "name": "guacamole",
+    "imagenet_1k": 924
+  },
+  "168": {
+    "wnid": "n07614500",
+    "name": "ice cream, icecream",
+    "imagenet_1k": 928
+  },
+  "169": {
+    "wnid": "n07615774",
+    "name": "ice lolly, lolly, lollipop, popsicle",
+    "imagenet_1k": 929
+  },
+  "170": {
+    "wnid": "n07646821",
+    "name": "goose",
+    "imagenet_1k": null
+  },
+  "171": {
+    "wnid": "n07647870",
+    "name": "drumstick",
+    "imagenet_1k": null
+  },
+  "172": {
+    "wnid": "n07657664",
+    "name": "plate",
+    "imagenet_1k": null
+  },
+  "173": {
+    "wnid": "n07695742",
+    "name": "pretzel",
+    "imagenet_1k": 932
+  },
+  "174": {
+    "wnid": "n07711569",
+    "name": "mashed potato",
+    "imagenet_1k": 935
+  },
+  "175": {
+    "wnid": "n07715103",
+    "name": "cauliflower",
+    "imagenet_1k": 938
+  },
+  "176": {
+    "wnid": "n07720875",
+    "name": "bell pepper",
+    "imagenet_1k": 945
+  },
+  "177": {
+    "wnid": "n07749582",
+    "name": "lemon",
+    "imagenet_1k": 951
+  },
+  "178": {
+    "wnid": "n07753592",
+    "name": "banana",
+    "imagenet_1k": 954
+  },
+  "179": {
+    "wnid": "n07768694",
+    "name": "pomegranate",
+    "imagenet_1k": 957
+  },
+  "180": {
+    "wnid": "n07871810",
+    "name": "meat loaf, meatloaf",
+    "imagenet_1k": 962
+  },
+  "181": {
+    "wnid": "n07873807",
+    "name": "pizza, pizza pie",
+    "imagenet_1k": 963
+  },
+  "182": {
+    "wnid": "n07875152",
+    "name": "potpie",
+    "imagenet_1k": 964
+  },
+  "183": {
+    "wnid": "n07920052",
+    "name": "espresso",
+    "imagenet_1k": 967
+  },
+  "184": {
+    "wnid": "n07975909",
+    "name": "bee",
+    "imagenet_1k": null
+  },
+  "185": {
+    "wnid": "n08496334",
+    "name": "apron",
+    "imagenet_1k": null
+  },
+  "186": {
+    "wnid": "n08620881",
+    "name": "pole",
+    "imagenet_1k": null
+  },
+  "187": {
+    "wnid": "n08742578",
+    "name": "Chihuahua",
+    "imagenet_1k": null
+  },
+  "188": {
+    "wnid": "n09193705",
+    "name": "alp",
+    "imagenet_1k": 970
+  },
+  "189": {
+    "wnid": "n09246464",
+    "name": "cliff, drop, drop-off",
+    "imagenet_1k": 972
+  },
+  "190": {
+    "wnid": "n09256479",
+    "name": "coral reef",
+    "imagenet_1k": 973
+  },
+  "191": {
+    "wnid": "n09332890",
+    "name": "lakeside, lakeshore",
+    "imagenet_1k": 975
+  },
+  "192": {
+    "wnid": "n09428293",
+    "name": "seashore, coast, seacoast, sea-coast",
+    "imagenet_1k": 978
+  },
+  "193": {
+    "wnid": "n12267677",
+    "name": "acorn",
+    "imagenet_1k": 988
+  },
+  "194": {
+    "wnid": "n12520864",
+    "name": "broom",
+    "imagenet_1k": null
+  },
+  "195": {
+    "wnid": "n13001041",
+    "name": "mushroom",
+    "imagenet_1k": null
+  },
+  "196": {
+    "wnid": "n13652335",
+    "name": "nail",
+    "imagenet_1k": null
+  },
+  "197": {
+    "wnid": "n13652994",
+    "name": "chain",
+    "imagenet_1k": null
+  },
+  "198": {
+    "wnid": "n13719102",
+    "name": "slug",
+    "imagenet_1k": null
+  },
+  "199": {
+    "wnid": "n14991210",
+    "name": "orange",
+    "imagenet_1k": null
+  }
+}

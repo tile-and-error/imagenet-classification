@@ -20,8 +20,8 @@ experiment changes one thing.
 - `experiments/kd/parts.py`: every reusable part, in one file.
 - `experiments/kd/kd_e0_e3.ipynb`: the experiments, with explanations.
 - `runs/` in `.gitignore`: run outputs (checkpoints, logs) stay out of git.
-- `download/create_imagenet_mapping.py` (from earlier): the Tiny folder →
-  ImageNet-1k class map that the teacher needs.
+- `download/imagenet_mapping.json` (committed): the Tiny folder → ImageNet-1k class
+  map that the teacher needs, so no setup step is needed for it.
 
 **How one KD run works**, from the bottom up:
 
@@ -245,7 +245,8 @@ is `test/`, the official Tiny val set.
 | 10 + 40 | `tiny-imagenet-10+40other-70-30_5504132` (`make_split`) | 350 / 150 / 50 | 14,000 / 6,000 / 2,000 |
 | 10 + 190 | `tiny-70-30_5504132` (`examples/imagenet-splits.ipynb`) | 350 / 150 / 50 | 66,500 / 28,500 / 9,500 |
 
-The class → ImageNet-1k map comes from `download/create_imagenet_mapping.py`.
+The class → ImageNet-1k map is `download/imagenet_mapping.json`, read by
+`parts.tiny_mapping()`.
 
 ## Decisions
 

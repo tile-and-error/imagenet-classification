@@ -17,7 +17,6 @@ For each teacher it:
 Exits with an error if any teacher fails, so a job script can run it as a check.
 """
 
-import json
 import sys
 import time
 import traceback
@@ -29,7 +28,12 @@ from torchvision.transforms.v2.functional import to_dtype
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-from experiments.kd.parts import TEACHERS, pick_device, teacher_model  # noqa: E402
+from experiments.kd.parts import (  # noqa: E402
+    TEACHERS,
+    pick_device,
+    teacher_model,
+    tiny_mapping,
+)
 
 ROOT = REPO / "data" / "tiny-imagenet"
 MIN_TOP1 = 0.05
@@ -39,7 +43,7 @@ def images(
     per_class: int = 4, num_classes: int = 50
 ) -> tuple[torch.Tensor, torch.Tensor]:
     # The first images of the first ImageNet-matched folders, with ImageNet labels
-    mapping = json.loads((ROOT / "imagenet_mapping.json").read_text())
+    mapping = tiny_mapping()
     folders = [f for f in sorted(mapping) if mapping[f]["imagenet_1k"] is not None]
     x, y = [], []
     for folder in folders[:num_classes]:

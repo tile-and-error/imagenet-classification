@@ -108,8 +108,13 @@ class DatasetSpec:
     train: dict = field(default_factory=dict)
 
 
-def tiny_mapping(root: Path) -> dict:
-    return json.loads((root / "imagenet_mapping.json").read_text())
+TINY_MAPPING = REPO / "download/imagenet_mapping.json"  # committed: Tiny -> IN-1k
+
+
+def tiny_mapping() -> dict:
+    # {folder: {wnid, name, imagenet_1k}}; imagenet_1k is null for the 18 classes
+    # that are not in ImageNet-1k
+    return json.loads(TINY_MAPPING.read_text())
 
 
 IMAGENET_NAMES = ResNet50_Weights.IMAGENET1K_V2.meta["categories"]  # in index order
@@ -127,9 +132,8 @@ DATASETS = {
             ]
         ),
         eval_transform=TO_FLOAT,  # images are already 64 px
-        # download/create_imagenet_mapping.py writes this mapping
-        imagenet_index=lambda root, c: tiny_mapping(root)[c]["imagenet_1k"],
-        class_name=lambda root, c: tiny_mapping(root)[c]["name"].split(",")[0],
+        imagenet_index=lambda _, c: tiny_mapping()[c]["imagenet_1k"],
+        class_name=lambda _, c: tiny_mapping()[c]["name"].split(",")[0],
     ),
     "imagenet-1k": DatasetSpec(
         root=REPO / "data/imagenet-1k",

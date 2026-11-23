@@ -50,7 +50,7 @@ From the repository root:
 Use `tiny-imagenet` to try the script out before downloading ImageNet-1k.
 
 > [!IMPORTANT]
-> `imagenet-1k` and `tiny-imagenet` have a different order of labels and don't fully overlap. Created `download/create_imagenet_mapping.py` to remedy this.
+> `imagenet-1k` and `tiny-imagenet` have a different order of labels and don't fully overlap. `download/imagenet_mapping.json` (committed, so there is nothing to run) maps each Tiny ImageNet folder (`000`–`199`) to its WordNet ID, name and ImageNet-1k index: `{"000": {"wnid": ..., "name": ..., "imagenet_1k": ...}}`. `imagenet_1k` is `null` for the 18 Tiny ImageNet classes that are not in ImageNet-1k.
 
 
 ## 1. Set up Hugging Face access (once per person)
@@ -69,7 +69,7 @@ Use `tiny-imagenet` to try the script out before downloading ImageNet-1k.
 > [!IMPORTANT]
 > Some datasets are gated. Before downloading, open the dataset's Hugging Face page (e.g. [ILSVRC/imagenet-1k](https://huggingface.co/datasets/ILSVRC/imagenet-1k)) and accept the terms, otherwise the download fails with an [access error](#huggingface-access-error).
 
-Run these from the folder containing `download_data.py`:
+Run these from the repository root:
 
 ```bash
 python download/download_data.py tiny-imagenet /path/to/data/tiny-imagenet
@@ -112,7 +112,7 @@ Class folders are named by label number.
    ```python
    "my-dataset": (download_my_dataset, {"train": (10, 8000), "test": (10, 2000)}),
    ```
-3. **Test it** with `python download_data.py my-dataset /path/to/data/my-dataset`, then commit the change. Everyone else then runs the same command.
+3. **Test it** with `python download/download_data.py my-dataset /path/to/data/my-dataset`, then commit the change. Everyone else then runs the same command.
 
 # Appendix
 
