@@ -7,11 +7,10 @@ from torch import Tensor
 # What each kind of event carries. Only `scalar` and `status` values are checked in
 # `RunEvent.__post_init__`; the others are stored as given.
 #   scalar    one number per step: `train/loss/total`, `eval/val/top1`
-#   table     rows of values, e.g. a per-class accuracy table (not emitted yet)
+#   table     named columns of values, e.g. a ROC curve `{"fpr": [...], "tpr": [...]}`
 #   artifact  the path of a file the run saved, e.g. a checkpoint `student.pt`
 #   status    a run state change (see `RunStatus`), sent by `OutputRouter` on exit
-#   message   free text such as a note or the traceback of a failed run, or a
-#             record such as `trainer/settings`
+#   message   free text such as a note or the traceback of a failed run
 type EventKind = Literal["scalar", "table", "artifact", "status", "message"]
 type RunStatus = Literal["running", "completed", "failed", "interrupted"]
 
