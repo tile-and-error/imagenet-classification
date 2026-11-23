@@ -2,27 +2,10 @@ import pytest
 import torch
 from torch import nn
 
-from lwfm.core.graph import ExecutionGraph, ModelNode
-from lwfm.core.losses import LossBinding, LossComposer
 from lwfm.training import Callback, StepOutput, Trainer
 from lwfm.training.steps import backward, forward_and_loss
 
-K = 3
-CE_READS = ["student.logits", "targets.class"]
-
-
-def batches(count, batch_size=4, seed=0):
-    """`count` seeded batches of random 3x2x2 images with labels in [0, K)."""
-    generator = torch.Generator().manual_seed(seed)
-    return [
-        {
-            "inputs": {"image": torch.rand(batch_size, 3, 2, 2, generator=generator)},
-            "targets": {
-                "class": torch.randint(0, K, (batch_size,), generator=generator)
-            },
-        }
-        for _ in range(count)
-    ]
+from conftest import K, batches, setup
 
 
 class RecordsDtype(nn.Module):
@@ -39,15 +22,6 @@ class RecordsDtype(nn.Module):
         return out
 
 
-def setup(seed=0, module=None):
-    """A seeded student (a linear classifier, or `module`), its graph and a CE loss."""
-    torch.manual_seed(seed)
-    module = module or nn.Sequential(nn.Flatten(), nn.Linear(12, K))
-    node = ModelNode("student", module, inputs="inputs.image", outputs="logits")
-    loss = LossComposer([LossBinding("ce", nn.CrossEntropyLoss(), CE_READS)])
-    return node, ExecutionGraph([node]), loss
-
-
 class CountSteps(Callback):
     def __init__(self):
         self.optimizer_steps = 0
@@ -61,7 +35,7 @@ class CountSteps(Callback):
 
 def test_accumulation_steps_every_k_batches_and_at_epoch_end():
     # 5 batches with k = 2: groups of 2, 2 and a final partial group of 1
-    node, graph, loss = setup()
+    node, graph, loss, _ = setup()
     counter = CountSteps()
     result = Trainer(device="cpu", max_epochs=2, accumulate_grad_batches=2).fit(
         graph,
@@ -83,7 +57,7 @@ def test_max_steps_counts_optimizer_steps_not_batches():
         def on_step_start(self, state, batch):
             self.batches += 1
 
-    node, graph, loss = setup()
+    node, graph, loss, _ = setup()
     counter = CountBatches()
     result = Trainer(device="cpu", max_steps=3, accumulate_grad_batches=2).fit(
         graph,
@@ -103,11 +77,11 @@ def test_accumulating_two_halves_equals_one_full_batch():
         "inputs": {"image": torch.cat([b["inputs"]["image"] for b in data])},
         "targets": {"class": torch.cat([b["targets"]["class"] for b in data])},
     }
-    node_a, graph_a, loss_a = setup()
+    node_a, graph_a, loss_a, _ = setup()
     Trainer(device="cpu", max_epochs=1, accumulate_grad_batches=2).fit(
         graph_a, data, loss_a, torch.optim.SGD(node_a.parameters(), lr=0.5)
     )
-    node_b, graph_b, loss_b = setup()
+    node_b, graph_b, loss_b, _ = setup()
     Trainer(device="cpu", max_epochs=1).fit(
         graph_b, [full], loss_b, torch.optim.SGD(node_b.parameters(), lr=0.5)
     )
@@ -120,7 +94,7 @@ def test_accumulating_two_halves_equals_one_full_batch():
 
 def test_gradient_clipping_bounds_the_update():
     # Plain SGD with lr = 1 moves the weights by exactly the clipped gradient
-    node, graph, loss = setup()
+    node, graph, loss, _ = setup()
     before = torch.cat([p.detach().flatten().clone() for p in node.parameters()])
     Trainer(device="cpu", max_steps=1, gradient_clip_norm=1e-3).fit(
         graph, batches(1), loss, torch.optim.SGD(node.parameters(), lr=1.0)
@@ -131,7 +105,7 @@ def test_gradient_clipping_bounds_the_update():
 
 def test_bf16_runs_the_forward_pass_under_autocast():
     module = RecordsDtype()
-    node, graph, loss = setup(module=module)
+    node, graph, loss, _ = setup(module=module)
     Trainer(device="cpu", max_steps=2, precision="bf16").fit(
         graph, batches(2), loss, torch.optim.SGD(node.parameters(), lr=0.1)
     )
@@ -146,7 +120,7 @@ def test_fp16_uses_a_grad_scaler_and_trains():
         def on_fit_start(self, state):
             scalers.append(state.scaler)
 
-    node, graph, loss = setup()
+    node, graph, loss, _ = setup()
     before = [p.detach().clone() for p in node.parameters()]
     Trainer(device="cpu", max_steps=3, precision="fp16").fit(
         graph,
@@ -174,7 +148,7 @@ def manual_step(state, batch):
 
 
 def test_custom_step_works_in_plain_fp32():
-    node, graph, loss = setup()
+    node, graph, loss, _ = setup()
     result = Trainer(device="cpu", max_steps=3, step_fn=manual_step).fit(
         graph, batches(3), loss, torch.optim.SGD(node.parameters(), lr=0.1)
     )
@@ -190,7 +164,7 @@ def test_a_step_that_stops_using_the_helpers_is_refused():
             return StepOutput(total.detach(), terms)
         return manual_step(state, batch)
 
-    node, graph, loss = setup()
+    node, graph, loss, _ = setup()
     trainer = Trainer(
         device="cpu", max_steps=3, step_fn=helpers_once, accumulate_grad_batches=2
     )
@@ -202,7 +176,7 @@ def test_a_step_that_stops_using_the_helpers_is_refused():
     "settings", [{"precision": "fp16"}, {"accumulate_grad_batches": 2}]
 )
 def test_custom_step_without_helpers_is_refused_when_they_matter(settings):
-    node, graph, loss = setup()
+    node, graph, loss, _ = setup()
     trainer = Trainer(device="cpu", max_steps=3, step_fn=manual_step, **settings)
     with pytest.raises(RuntimeError, match="steps.backward"):
         trainer.fit(graph, batches(4), loss, torch.optim.SGD(node.parameters(), lr=0.1))

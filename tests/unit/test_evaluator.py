@@ -7,10 +7,10 @@ from lwfm.core.batch import to_device
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
 from lwfm.evaluation.evaluator import Evaluator
 from lwfm.evaluation.metrics import MetricBinding
-from lwfm.results.sinks import OutputSink
+
+from conftest import CE_READS
 
 CPU = torch.device("cpu")
-READS = ["student.logits", "targets.class"]
 
 # Hand-worked, K = 6. Rank of the true class: 1, 1, 6, 2.
 # top-1 = 2/4 = 0.5; top-5 = 3/4 = 0.75 (only the third sample misses).
@@ -22,6 +22,7 @@ LOGITS = torch.tensor(
         [5.0, 0, 4, 0, 0, 0],
     ]
 )
+
 CLASSES = torch.tensor([0, 1, 5, 2])
 
 
@@ -44,19 +45,8 @@ def logits_graph(module=None):
 
 def top_k(k):
     return MetricBinding(
-        f"top{k}", MulticlassAccuracy(num_classes=6, top_k=k, average="micro"), READS
+        f"top{k}", MulticlassAccuracy(num_classes=6, top_k=k, average="micro"), CE_READS
     )
-
-
-class ListSink(OutputSink):
-    def __init__(self):
-        self.events = []
-
-    def write(self, event):
-        self.events.append(event)
-
-    def close(self):
-        pass
 
 
 class Probe(nn.Module):
@@ -115,8 +105,7 @@ def test_mode_is_restored_when_a_metric_fails(was_training):
     assert graph.training == was_training
 
 
-def test_values_are_emitted_as_eval_split_name():
-    sink = ListSink()
+def test_values_are_emitted_as_eval_split_name(sink):
     Evaluator().evaluate(
         logits_graph(),
         LOADER,
@@ -140,7 +129,11 @@ def test_values_are_emitted_as_eval_split_name():
         (LOADER, [top_k(1), top_k(1)], ValueError, "unique"),
         (
             LOADER,
-            [MetricBinding("per_class", MulticlassAccuracy(6, average="none"), READS)],
+            [
+                MetricBinding(
+                    "per_class", MulticlassAccuracy(6, average="none"), CE_READS
+                )
+            ],
             TypeError,
             "'per_class' computed shape \\(6,\\)",
         ),

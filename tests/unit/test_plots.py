@@ -9,12 +9,12 @@ from lwfm.results.plots import PlotSink, is_columns
 from lwfm.results.router import OutputRouter
 from lwfm.training import Trainer
 
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+from conftest import is_png
 
 
 def png_names(plot_dir):
     paths = sorted(plot_dir.glob("*.png"))
-    assert all(path.read_bytes().startswith(PNG_SIGNATURE) for path in paths)
+    assert all(is_png(path) for path in paths)
     return [path.name for path in paths]
 
 

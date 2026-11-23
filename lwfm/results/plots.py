@@ -10,15 +10,19 @@ type Columns = dict[str, list[float]]
 
 
 class PlotSink(OutputSink):
-    """Saves one PNG per plottable event to `plot_dir` when closed.
+    """Draws the run's events as PNG files in `plot_dir`, one per event name, when
+    closed. Two kinds of event are drawn; the rest are ignored:
 
-    - A scalar with a step becomes a line against the step, e.g. `train/loss/total`.
-    - A `table` whose value is a dict of equal-length numeric columns becomes a
-      curve: the first column on x, each other column on y. A ROC curve is
-      `{"fpr": [...], "tpr": [...]}`. A later table of the same name replaces it.
+    - Scalars over training: every `scalar` event named e.g. `train/loss/total`
+      gives one point (step, value), and the points are joined into one line plot
+      of that value against the training step. Scalars without a step are skipped.
+    - Curves: a `table` event whose value is named columns of numbers, e.g. a ROC
+      curve `{"fpr": [0.0, 0.1, ...], "tpr": [0.0, 0.6, ...]}`, is drawn with the
+      first column on the x axis and each other column as a line. If a name is
+      sent twice, the later table is drawn.
 
-    Other events are ignored. Files are named after the event, `/` as `_`:
-    `eval/val/roc` is saved as `eval_val_roc.png`.
+    `eval/val/roc` is saved as `eval_val_roc.png`. For any other plot, draw the
+    figure yourself and save it with `save_artifact(..., figure.savefig, ...)`.
     """
 
     def __init__(self, plot_dir: str | Path):

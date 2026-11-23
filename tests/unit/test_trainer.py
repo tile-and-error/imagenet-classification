@@ -3,34 +3,26 @@ import json
 import pytest
 import torch
 from torch import nn
-from torchmetrics import MeanMetric
 from torchmetrics.classification import MulticlassAccuracy
 
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
 from lwfm.core.losses import LossBinding, LossComposer
 from lwfm.evaluation.metrics import MetricBinding
 from lwfm.results.router import OutputRouter
-from lwfm.results.sinks import LocalFileSink, OutputSink
+from lwfm.results.sinks import LocalFileSink
 from lwfm.training import Callback, Trainer, TrainingResult, seed_everything
 from lwfm.training.callbacks import HOOKS
 from lwfm.training.trainer import json_safe_values
 
-K = 3
-CE_READS = ["student.logits", "targets.class"]
-
-
-class ListSink(OutputSink):
-    def __init__(self):
-        self.events = []
-
-    def write(self, event):
-        self.events.append(event)
-
-    def close(self):
-        pass
-
-    def steps_of(self, name):
-        return [event.step for event in self.events if event.name == name]
+from conftest import (
+    CE_READS,
+    K,
+    accuracy,
+    batches,
+    constant_metric,
+    setup,
+    student,
+)
 
 
 class HookRecorder(Callback):
@@ -43,53 +35,6 @@ class HookRecorder(Callback):
         if name in HOOKS:
             return lambda state, *args: self.calls.append(name)
         return super().__getattribute__(name)
-
-
-def batches(count, batch_size=4, seed=0):
-    """`count` seeded batches of random 3x2x2 images with labels in [0, K), plus a
-    constant `targets.one` for a metric that never changes."""
-    generator = torch.Generator().manual_seed(seed)
-    return [
-        {
-            "inputs": {"image": torch.rand(batch_size, 3, 2, 2, generator=generator)},
-            "targets": {
-                "class": torch.randint(0, K, (batch_size,), generator=generator),
-                "one": torch.ones(
-                    batch_size
-                ),  # a constant, for a metric that never moves
-            },
-        }
-        for _ in range(count)
-    ]
-
-
-def student():
-    """A fresh linear student node: reads `inputs.image`, writes `student.logits`."""
-    return ModelNode(
-        "student",
-        nn.Sequential(nn.Flatten(), nn.Linear(12, K)),
-        inputs="inputs.image",
-        outputs="logits",
-    )
-
-
-def setup(lr=0.1, seed=0):
-    """A seeded student, its one-node graph, a CE loss and SGD over the student."""
-    torch.manual_seed(seed)
-    node = student()
-    graph = ExecutionGraph([node])
-    loss = LossComposer([LossBinding("ce", nn.CrossEntropyLoss(), CE_READS)])
-    return node, graph, loss, torch.optim.SGD(node.parameters(), lr=lr)
-
-
-def accuracy():
-    """Micro top-1 accuracy on the student's logits, as a one-metric list."""
-    return [MetricBinding("top1", MulticlassAccuracy(K, average="micro"), CE_READS)]
-
-
-def constant_metric():
-    """A validation metric that is always 1.0, so it never improves after the first."""
-    return [MetricBinding("const", MeanMetric(), ["targets.one"])]
 
 
 # --- training ------------------------------------------------------------------
@@ -124,9 +69,8 @@ def test_matches_hand_written_loop_exactly():
         assert torch.equal(a, b)
 
 
-def test_counts_epochs_validates_each_epoch_and_logs():
+def test_counts_epochs_validates_each_epoch_and_logs(sink):
     _, graph, loss, optimizer = setup()
-    sink = ListSink()
     result = Trainer(device="cpu", max_epochs=3, log_every_n_steps=5).fit(
         graph,
         batches(5),
@@ -185,9 +129,8 @@ def test_max_steps_on_an_epoch_boundary_counts_the_epoch():
     assert recorder.calls.count("on_epoch_end") == 2
 
 
-def test_stopping_mid_epoch_skips_the_epoch_but_still_validates():
+def test_stopping_mid_epoch_skips_the_epoch_but_still_validates(sink):
     _, graph, loss, optimizer = setup()
-    sink = ListSink()
     result = Trainer(device="cpu", max_steps=7).fit(
         graph,
         batches(5),
@@ -245,13 +188,12 @@ def test_frozen_teacher_stays_in_eval_and_unchanged():
         assert b.grad is None
 
 
-def test_lr_is_logged_per_param_group():
+def test_lr_is_logged_per_param_group(sink):
     node, graph, loss, _ = setup()
     weight, bias = node.parameters()
     optimizer = torch.optim.SGD(
         [{"params": [weight]}, {"params": [bias], "lr": 0.01}], lr=0.1
     )
-    sink = ListSink()
     Trainer(device="cpu", max_steps=1, log_every_n_steps=1).fit(
         graph, batches(1), loss, optimizer, output_sink=sink
     )
@@ -533,9 +475,8 @@ def test_early_exit_runs_on_fit_end_then_reraises(error, reason):
 # --- recorded settings ---------------------------------------------------------
 
 
-def test_settings_are_recorded_once_before_training():
+def test_settings_are_recorded_once_before_training(sink):
     _, graph, loss, optimizer = setup(seed=3)
-    sink = ListSink()
     Trainer(
         device="cpu",
         max_steps=2,

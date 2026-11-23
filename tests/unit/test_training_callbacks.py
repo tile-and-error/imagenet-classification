@@ -4,13 +4,11 @@ import json
 import pytest
 import torch
 from torch import nn
-from torchmetrics import MeanMetric
 
 from lwfm.core.graph import ExecutionGraph, ModelNode
 from lwfm.core.losses import LossBinding, LossComposer
-from lwfm.evaluation.metrics import MetricBinding
 from lwfm.results.router import OutputRouter
-from lwfm.results.sinks import LocalFileSink, OutputSink
+from lwfm.results.sinks import LocalFileSink
 from lwfm.training import Callback, Trainer, TrainingResult, TrainingState
 from lwfm.training.callbacks import (
     EarlyStopping,
@@ -20,56 +18,15 @@ from lwfm.training.callbacks import (
     improved,
 )
 
-K = 3
-CE_READS = ["student.logits", "targets.class"]
-
-
-class ListSink(OutputSink):
-    def __init__(self):
-        self.events = []
-
-    def write(self, event):
-        self.events.append(event)
-
-    def close(self):
-        pass
-
-
-def batches(count, batch_size=4, seed=0):
-    """`count` seeded batches of random 3x2x2 images with labels in [0, K), plus a
-    constant `targets.one` for a metric that never changes."""
-    generator = torch.Generator().manual_seed(seed)
-    return [
-        {
-            "inputs": {"image": torch.rand(batch_size, 3, 2, 2, generator=generator)},
-            "targets": {
-                "class": torch.randint(0, K, (batch_size,), generator=generator),
-                "one": torch.ones(batch_size),
-            },
-        }
-        for _ in range(count)
-    ]
-
-
-def make_module():
-    """The student's architecture: a linear classifier on flattened 3x2x2 images."""
-    return nn.Sequential(nn.Flatten(), nn.Linear(12, K))
-
-
-def setup(weight=1.0):
-    """A seeded student, its graph, a CE loss with this `weight`, and SGD."""
-    torch.manual_seed(0)
-    node = ModelNode("student", make_module(), inputs="inputs.image", outputs="logits")
-    loss = LossComposer(
-        [LossBinding("ce", nn.CrossEntropyLoss(), CE_READS, weight=weight)]
-    )
-    optimizer = torch.optim.SGD(node.parameters(), lr=0.1)
-    return node, ExecutionGraph([node]), loss, optimizer
-
-
-def constant_metric():
-    """A validation metric that is always 1.0, so it never improves after the first."""
-    return [MetricBinding("const", MeanMetric(), ["targets.one"])]
+from conftest import (
+    CE_READS,
+    K,
+    ListSink,
+    batches,
+    classifier,
+    constant_metric,
+    setup,
+)
 
 
 def bare_state(graph, loss, optimizer, sink=None, metric_names=("top1",)):
@@ -225,9 +182,8 @@ def test_callbacks_start_afresh_in_every_fit(tmp_path):
 # --- ModelCheckpoint ------------------------------------------------------------
 
 
-def test_checkpoint_saves_best_only_on_improvement(tmp_path):
+def test_checkpoint_saves_best_only_on_improvement(tmp_path, sink):
     node, graph, loss, optimizer = setup()
-    sink = ListSink()
     checkpoint = ModelCheckpoint(tmp_path, node="student", monitored_metric="top1")
     state = bare_state(graph, loss, optimizer, sink)
     checkpoint.on_fit_start(state)
@@ -242,7 +198,7 @@ def test_checkpoint_saves_best_only_on_improvement(tmp_path):
     ]
     # best.pt is the deployable module alone, and loads strictly into a fresh one
     weights = torch.load(tmp_path / "checkpoints/best.pt", weights_only=True)
-    make_module().load_state_dict(weights)
+    classifier().load_state_dict(weights)
 
 
 def test_checkpoint_last_holds_the_full_training_state(tmp_path):
@@ -268,13 +224,12 @@ def test_checkpoint_last_holds_the_full_training_state(tmp_path):
     assert (last["global_step"], last["epoch"]) == (7, 2)
 
 
-def test_checkpoint_last_weights_hold_only_the_node(tmp_path):
+def test_checkpoint_last_weights_hold_only_the_node(tmp_path, sink):
     student, graph, loss, optimizer = setup()
     teacher = ModelNode(
-        "teacher", make_module(), inputs="inputs.image", outputs="z", frozen=True
+        "teacher", classifier(), inputs="inputs.image", outputs="z", frozen=True
     )
     graph = ExecutionGraph([student, teacher])
-    sink = ListSink()
     checkpoint = ModelCheckpoint(tmp_path, node="student")
     state = bare_state(graph, loss, optimizer, sink)
     checkpoint.on_fit_start(state)
@@ -285,7 +240,7 @@ def test_checkpoint_last_weights_hold_only_the_node(tmp_path):
         ("checkpoint/last_weights", "checkpoints/last_weights.pt"),
     ]
     weights = torch.load(tmp_path / "checkpoints/last_weights.pt", weights_only=True)
-    fresh = make_module()
+    fresh = classifier()
     fresh.load_state_dict(weights)  # strict: the student's keys and nothing else
     for got, want in zip(fresh.parameters(), student.parameters(), strict=True):
         assert torch.equal(got, want)
@@ -301,9 +256,8 @@ def test_checkpoint_without_save_last_writes_no_last(tmp_path):
     assert not (tmp_path / "checkpoints/last_weights.pt").exists()
 
 
-def test_checkpoint_goal_min_saves_when_the_metric_falls(tmp_path):
+def test_checkpoint_goal_min_saves_when_the_metric_falls(tmp_path, sink):
     _, graph, loss, optimizer = setup()
-    sink = ListSink()
     checkpoint = ModelCheckpoint(
         tmp_path, node="student", monitored_metric="loss", goal="min"
     )
@@ -400,7 +354,7 @@ def test_ema_moves_the_target_towards_the_source():
 
 
 def test_ema_rejects_different_architectures():
-    student = ModelNode("student", make_module(), inputs="inputs.image", outputs="z")
+    student = ModelNode("student", classifier(), inputs="inputs.image", outputs="z")
     other = ModelNode(
         "teacher",
         nn.Sequential(nn.Flatten(), nn.Linear(12, 5)),

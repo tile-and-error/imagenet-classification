@@ -1,4 +1,3 @@
-import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -7,7 +6,7 @@ import torch
 
 from lwfm.core.losses import LossBinding
 from lwfm.core.types import Batch
-from lwfm.results.events import RunEvent
+from lwfm.results.artifacts import save_artifact
 
 if TYPE_CHECKING:
     from lwfm.training.state import StepOutput, TrainingResult, TrainingState
@@ -220,7 +219,6 @@ class ModelCheckpoint(Callback):
             )
         if self.monitored_metric is not None:
             require_metric(self, self.monitored_metric, state)
-        self.best_path.parent.mkdir(parents=True, exist_ok=True)
         self.best_value = None
 
     def on_validation_end(
@@ -252,20 +250,14 @@ class ModelCheckpoint(Callback):
     def _save(
         self, state: "TrainingState", contents: dict, path: Path, event_name: str
     ) -> None:
-        # File first, then the event, so the record never points at a missing file.
-        # os.replace is atomic: a job killed mid-save leaves the previous file intact.
-        temporary = path.with_name(path.name + ".tmp")
-        torch.save(contents, temporary)
-        os.replace(temporary, path)
-        if state.output_sink is not None:
-            state.output_sink.write(
-                RunEvent(
-                    "artifact",
-                    event_name,
-                    path.relative_to(self.run_dir),
-                    step=state.global_step,
-                )
-            )
+        save_artifact(
+            self.run_dir,
+            path.relative_to(self.run_dir),
+            lambda temporary: torch.save(contents, temporary),
+            state.output_sink,
+            name=event_name,
+            step=state.global_step,
+        )
 
 
 class EMAUpdate(Callback):

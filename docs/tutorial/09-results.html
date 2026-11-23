@@ -76,7 +76,7 @@ runs/demo/  events.jsonl  manifest.json  status.json  summary.json</pre>
 <h3>Saving weights: a file, plus an event that points to it</h3>
 <pre class="code"><code class="language-python">torch.save(model.state_dict(), &quot;runs/demo/student.pt&quot;)         # torch: the weights, in their own file
 router.write(RunEvent(&quot;artifact&quot;, &quot;fit/checkpoint&quot;, &quot;student.pt&quot;))  # lwfm: the log records where it is</code></pre>
-<p class="muted">Sinks never receive tensors: a one-number tensor becomes a plain number, anything bigger is refused. Large data goes to its own file; the event only says where it is.</p>
+<p class="muted">Sinks never receive tensors: a one-number tensor becomes a plain number, anything bigger is refused. Large data goes to its own file; the event only says where it is. <code class="l">save_artifact(run_dir, "student.pt", write, router, name=...)</code>, in <code>lwfm.results.artifacts</code>, does both lines in one call and writes the file atomically; <code>write</code> is e.g. <code>figure.savefig</code> for any matplotlib plot.</p>
 <table>
   <tr><th>File</th><th>Written</th><th>Holds</th></tr>
   <tr><td><code>manifest.json</code></td><td>at the start</td><td>versions, machine, your settings</td></tr>
