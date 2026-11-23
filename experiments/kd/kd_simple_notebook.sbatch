@@ -7,7 +7,7 @@
 #
 #SBATCH --job-name=taelwfm-1    # Job name for tracking
 #SBATCH --partition=eagle  # Partition you wish to use (see above for list)
-#SBATCH --cpus-per-task=8        # Number of CPU threads used by your job
+#SBATCH --cpus-per-task=6       # Number of CPU threads used by your job
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1              # Number of GPUs to use
 #SBATCH --mem=60000               # 60 GB RAM
