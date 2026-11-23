@@ -1,6 +1,8 @@
+import random
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 
+import numpy as np  # a torchvision dependency, so always installed
 import torch
 from torch import Tensor
 from torch.amp.grad_scaler import GradScaler
@@ -39,6 +41,10 @@ class Trainer:
     `accumulate_grad_batches=k`, one step is k batches. Without `val_every_n_steps`,
     validation runs after every epoch. Either way, a run that stops part-way through
     an epoch validates once more, so it always ends with a validation result.
+
+    With an output sink, `fit` first writes a `trainer/settings` message holding the
+    loop settings, the torch seed and the optimizer, scheduler and callbacks, so
+    every run records what it needs to be reproduced and compared.
     """
 
     def __init__(
@@ -124,9 +130,14 @@ class Trainer:
         )
         history: History = []
 
+        if output_sink is not None:
+            settings = self._settings(
+                optimizer, scheduler, scheduler_interval, callbacks
+            )
+            output_sink.write(RunEvent("message", "trainer/settings", settings, step=0))
         state.emit("on_fit_start")
         try:
-            while not self._should_stop(state):
+            while self._stop_reason(state) is None:
                 epoch_completed = self._run_epoch(
                     state, train_loader, val_loader, metrics, history
                 )
@@ -144,12 +155,17 @@ class Trainer:
             stop_reason = (
                 "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
             )
+            result = TrainingResult(
+                state.global_step, state.epoch, stop_reason, history
+            )
             try:
-                state.emit("on_fit_end", self._make_result(state, history, stop_reason))
+                state.emit("on_fit_end", result)
             except Exception as hook_error:
                 error.add_note(f"on_fit_end also failed: {hook_error!r}")
             raise
-        result = self._make_result(state, history, self._stop_reason(state))
+        stop_reason = self._stop_reason(state)
+        assert stop_reason is not None  # the loop only ends once a limit is reached
+        result = TrainingResult(state.global_step, state.epoch, stop_reason, history)
         state.emit("on_fit_end", result)
         return result
 
@@ -173,6 +189,7 @@ class Trainer:
             batch = to_device(batch, self.device)
 
             state.emit("on_step_start", batch)
+            state.used_backward_helper = False  # so every step is checked, not just one
             step_output = self.step_fn(state, batch)
             self._check_step_used_helpers(state)
             optimizer_stepped = state.is_accumulation_boundary
@@ -195,7 +212,7 @@ class Trainer:
             )
             if val_loader is not None and validation_due:
                 self._validate(state, val_loader, metrics, history)
-            if self._should_stop(state) and not is_last_batch:
+            if self._stop_reason(state) is not None and not is_last_batch:
                 return False
         if batch_count == 0:
             raise ValueError("train_loader yielded no batches")
@@ -264,24 +281,76 @@ class Trainer:
                 RunEvent("scalar", name, value, step=state.global_step)
             )
 
-    def _should_stop(self, state: TrainingState) -> bool:
-        """True once a callback asked to stop, or a step or epoch limit is reached."""
-        steps_done = self.max_steps is not None and state.global_step >= self.max_steps
-        epochs_done = self.max_epochs is not None and state.epoch >= self.max_epochs
-        return state.should_stop or steps_done or epochs_done
+    def _settings(
+        self,
+        optimizer: torch.optim.Optimizer,
+        scheduler: LRScheduler | None,
+        scheduler_interval: SchedulerInterval | None,
+        callbacks: Sequence[Callback],
+    ) -> dict[str, object]:
+        """Everything needed to reproduce or compare this run, as JSON-safe values."""
+        return {
+            "device": str(self.device),
+            "precision": self.precision,
+            "max_epochs": self.max_epochs,
+            "max_steps": self.max_steps,
+            "accumulate_grad_batches": self.accumulate_grad_batches,
+            "gradient_clip_norm": self.gradient_clip_norm,
+            "val_every_n_steps": self.val_every_n_steps,
+            "log_every_n_steps": self.log_every_n_steps,
+            "step_fn": qualified_name(self.step_fn),
+            # The seed torch's default generator started from: the one given to
+            # seed_everything, or the random one torch picked if nothing seeded it
+            "torch_seed": torch.initial_seed(),
+            "optimizer": {
+                "type": type(optimizer).__name__,
+                **json_safe_values(optimizer.defaults),
+            },
+            "scheduler": None if scheduler is None else type(scheduler).__name__,
+            "scheduler_interval": scheduler_interval,
+            "callbacks": [type(callback).__name__ for callback in callbacks],
+        }
 
-    def _stop_reason(self, state: TrainingState) -> StopReason:
-        """Why training ended; called only once the loop has finished."""
+    def _stop_reason(self, state: TrainingState) -> StopReason | None:
+        """Why training should stop now, or None to keep going."""
         if state.should_stop:
             return "stopped"
         if self.max_steps is not None and state.global_step >= self.max_steps:
             return "max_steps"
-        return "max_epochs"
+        if self.max_epochs is not None and state.epoch >= self.max_epochs:
+            return "max_epochs"
+        return None
 
-    def _make_result(
-        self, state: TrainingState, history: History, stop_reason: StopReason
-    ) -> TrainingResult:
-        return TrainingResult(state.global_step, state.epoch, stop_reason, history)
+
+def seed_everything(seed: int) -> None:
+    """Seeds Python's, NumPy's and torch's generators (torch's covers every CUDA
+    device). Call it before building the model: weight initialisation draws from them.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+
+def qualified_name(function: Callable) -> str:
+    """e.g. `lwfm.training.steps.default_step`."""
+    module = getattr(function, "__module__", None)
+    name = getattr(function, "__qualname__", type(function).__name__)
+    return f"{module}.{name}" if module else name
+
+
+def json_safe_values(settings: dict[str, object]) -> dict[str, object]:
+    """The entries whose values are plain numbers, strings, booleans or None, or
+    lists or tuples of them; anything else (e.g. a tensor learning rate) is left out."""
+    plain_types = (bool, int, float, str, type(None))
+    kept: dict[str, object] = {}
+    for key, value in settings.items():
+        if isinstance(value, plain_types):
+            kept[key] = value
+        elif isinstance(value, list | tuple) and all(
+            isinstance(item, plain_types) for item in value
+        ):
+            kept[key] = list(value)
+    return kept
 
 
 def mark_last_batch(batches: Iterable[Batch]) -> Iterator[tuple[Batch, bool]]:

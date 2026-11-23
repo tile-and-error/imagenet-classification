@@ -147,8 +147,13 @@ class EarlyStopping(Callback):
 
 class ModelCheckpoint(Callback):
     """Saves one node's weights as `best.pt` whenever `monitored_metric` improves
-    (only if one is given), and the full training state as `last.pt` when fit ends,
-    including after Ctrl-C or a crash (check `result.stop_reason` to tell).
+    (only if one is given). When fit ends, including after Ctrl-C or a crash (check
+    `result.stop_reason` to tell), saves the full training state as `last.pt` and
+    the node's final weights as `last_weights.pt`.
+
+    `best.pt` and `last_weights.pt` hold `deployable_model(node).state_dict()`
+    alone: no teachers or training-only nodes, so they load into a fresh module and
+    their size is the model's size. `last.pt` is for resuming and inspection.
 
     Files go in `run_dir/subdir`. Each save is written atomically, then announced as
     an `artifact` event whose path is relative to `run_dir`, so the run directory can
@@ -171,6 +176,7 @@ class ModelCheckpoint(Callback):
         self.save_last = save_last
         self.best_path = self.run_dir / subdir / "best.pt"
         self.last_path = self.run_dir / subdir / "last.pt"
+        self.last_weights_path = self.run_dir / subdir / "last_weights.pt"
         self.best_value: float | None = None
 
     def on_fit_start(self, state: "TrainingState") -> None:
@@ -192,13 +198,23 @@ class ModelCheckpoint(Callback):
         value = metrics[self.monitored_metric]
         if improved(value, self.best_value, self.goal):
             self.best_value = value
-            # The deployable module only: no teachers, no training-only projectors
-            weights = state.graph.deployable_model(self.node).state_dict()
-            self._save(state, weights, self.best_path, "checkpoint/best")
+            self._save(
+                state, self._node_weights(state), self.best_path, "checkpoint/best"
+            )
 
     def on_fit_end(self, state: "TrainingState", result: "TrainingResult") -> None:
         if self.save_last:
             self._save(state, state.state_dict(), self.last_path, "checkpoint/last")
+            self._save(
+                state,
+                self._node_weights(state),
+                self.last_weights_path,
+                "checkpoint/last_weights",
+            )
+
+    def _node_weights(self, state: "TrainingState") -> dict:
+        # The deployable module only: no teachers, no training-only projectors
+        return state.graph.deployable_model(self.node).state_dict()
 
     def _save(
         self, state: "TrainingState", contents: dict, path: Path, event_name: str

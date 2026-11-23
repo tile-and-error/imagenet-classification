@@ -5,7 +5,7 @@ from torch import nn
 from lwfm.core.graph import ExecutionGraph, ModelNode
 from lwfm.core.losses import LossBinding, LossComposer
 from lwfm.training import Callback, StepOutput, Trainer
-from lwfm.training.steps import forward_and_loss
+from lwfm.training.steps import backward, forward_and_loss
 
 K = 3
 CE_READS = ["student.logits", "targets.class"]
@@ -179,6 +179,23 @@ def test_custom_step_works_in_plain_fp32():
         graph, batches(3), loss, torch.optim.SGD(node.parameters(), lr=0.1)
     )
     assert result.global_step == 3
+
+
+def test_a_step_that_stops_using_the_helpers_is_refused():
+    # Helpers on the first batch only: every later step must be checked too
+    def helpers_once(state, batch):
+        if state.global_step == 0 and state.accumulated == 1:
+            total, terms = forward_and_loss(state, batch)
+            backward(state, total)
+            return StepOutput(total.detach(), terms)
+        return manual_step(state, batch)
+
+    node, graph, loss = setup()
+    trainer = Trainer(
+        device="cpu", max_steps=3, step_fn=helpers_once, accumulate_grad_batches=2
+    )
+    with pytest.raises(RuntimeError, match="steps.backward"):
+        trainer.fit(graph, batches(6), loss, torch.optim.SGD(node.parameters(), lr=0.1))
 
 
 @pytest.mark.parametrize(

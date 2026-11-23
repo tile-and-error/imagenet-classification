@@ -247,9 +247,7 @@ def test_checkpoint_saves_best_only_on_improvement(tmp_path):
 
 def test_checkpoint_last_holds_the_full_training_state(tmp_path):
     _, graph, loss, optimizer = setup()
-    checkpoint = ModelCheckpoint(
-        tmp_path, node="student"
-    )  # no monitored metric: last.pt only
+    checkpoint = ModelCheckpoint(tmp_path, node="student")  # no monitored metric
     state = bare_state(graph, loss, optimizer)
     state.global_step, state.epoch = 7, 2
     checkpoint.on_fit_start(state)
@@ -270,6 +268,29 @@ def test_checkpoint_last_holds_the_full_training_state(tmp_path):
     assert (last["global_step"], last["epoch"]) == (7, 2)
 
 
+def test_checkpoint_last_weights_hold_only_the_node(tmp_path):
+    student, graph, loss, optimizer = setup()
+    teacher = ModelNode(
+        "teacher", make_module(), inputs="inputs.image", outputs="z", frozen=True
+    )
+    graph = ExecutionGraph([student, teacher])
+    sink = ListSink()
+    checkpoint = ModelCheckpoint(tmp_path, node="student")
+    state = bare_state(graph, loss, optimizer, sink)
+    checkpoint.on_fit_start(state)
+    checkpoint.on_fit_end(state, TrainingResult(0, 0, "max_steps", []))
+
+    assert [(e.name, str(e.value)) for e in sink.events] == [
+        ("checkpoint/last", "checkpoints/last.pt"),
+        ("checkpoint/last_weights", "checkpoints/last_weights.pt"),
+    ]
+    weights = torch.load(tmp_path / "checkpoints/last_weights.pt", weights_only=True)
+    fresh = make_module()
+    fresh.load_state_dict(weights)  # strict: the student's keys and nothing else
+    for got, want in zip(fresh.parameters(), student.parameters(), strict=True):
+        assert torch.equal(got, want)
+
+
 def test_checkpoint_without_save_last_writes_no_last(tmp_path):
     _, graph, loss, optimizer = setup()
     checkpoint = ModelCheckpoint(tmp_path, node="student", save_last=False)
@@ -277,6 +298,7 @@ def test_checkpoint_without_save_last_writes_no_last(tmp_path):
     checkpoint.on_fit_start(state)
     checkpoint.on_fit_end(state, TrainingResult(0, 0, "max_steps", []))
     assert not (tmp_path / "checkpoints/last.pt").exists()
+    assert not (tmp_path / "checkpoints/last_weights.pt").exists()
 
 
 def test_checkpoint_goal_min_saves_when_the_metric_falls(tmp_path):
@@ -314,6 +336,7 @@ def test_checkpoint_in_a_real_run_records_artifacts(tmp_path):
     assert artifacts == [
         ("checkpoint/best", "checkpoints/best.pt"),
         ("checkpoint/last", "checkpoints/last.pt"),
+        ("checkpoint/last_weights", "checkpoints/last_weights.pt"),
     ]
 
 

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 import torch
 from torch import nn
@@ -7,9 +9,11 @@ from torchmetrics.classification import MulticlassAccuracy
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
 from lwfm.core.losses import LossBinding, LossComposer
 from lwfm.evaluation.metrics import MetricBinding
-from lwfm.results.sinks import OutputSink
+from lwfm.results.router import OutputRouter
+from lwfm.results.sinks import LocalFileSink, OutputSink
 from lwfm.training import Callback, Trainer, TrainingResult, seed_everything
 from lwfm.training.callbacks import HOOKS
+from lwfm.training.trainer import json_safe_values
 
 K = 3
 CE_READS = ["student.logits", "targets.class"]
@@ -524,6 +528,67 @@ def test_early_exit_runs_on_fit_end_then_reraises(error, reason):
             graph, batches(5), loss, optimizer, callbacks=[Exit()]
         )
     assert ended == [reason]
+
+
+# --- recorded settings ---------------------------------------------------------
+
+
+def test_settings_are_recorded_once_before_training():
+    _, graph, loss, optimizer = setup(seed=3)
+    sink = ListSink()
+    Trainer(
+        device="cpu",
+        max_steps=2,
+        precision="bf16",
+        accumulate_grad_batches=2,
+        gradient_clip_norm=1.0,
+    ).fit(
+        graph, batches(4), loss, optimizer, callbacks=[HookRecorder()], output_sink=sink
+    )
+
+    first = sink.events[0]
+    assert (first.kind, first.name, first.step) == ("message", "trainer/settings", 0)
+    assert [e.name for e in sink.events].count("trainer/settings") == 1
+    settings = first.value
+    assert settings["precision"] == "bf16"
+    assert settings["accumulate_grad_batches"] == 2
+    assert settings["gradient_clip_norm"] == 1.0
+    assert (settings["max_steps"], settings["max_epochs"]) == (2, None)
+    assert settings["torch_seed"] == 3  # setup seeds torch with 3
+    assert settings["step_fn"] == "lwfm.training.steps.default_step"
+    assert settings["optimizer"]["type"] == "SGD"
+    assert settings["optimizer"]["lr"] == 0.1
+    assert settings["callbacks"] == ["HookRecorder"]
+
+
+def test_settings_survive_a_file_sink(tmp_path):
+    node, graph, loss, _ = setup()
+    optimizer = torch.optim.Adam(node.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1)
+    with OutputRouter(LocalFileSink(tmp_path)) as sink:
+        Trainer(device="cpu", max_steps=1).fit(
+            graph,
+            batches(1),
+            loss,
+            optimizer,
+            scheduler=scheduler,
+            scheduler_interval="step",
+            output_sink=sink,
+        )
+    events = [json.loads(line) for line in (tmp_path / "events.jsonl").open()]
+    settings = next(e["value"] for e in events if e["name"] == "trainer/settings")
+    assert settings["optimizer"]["betas"] == [0.9, 0.999]  # a tuple, stored as a list
+    assert (settings["scheduler"], settings["scheduler_interval"]) == ("StepLR", "step")
+
+
+def test_json_safe_values_leaves_out_what_json_cannot_hold():
+    settings = {
+        "lr": torch.tensor(0.1),
+        "betas": (0.9, 0.99),
+        "foreach": None,
+        "odd": [object()],
+    }
+    assert json_safe_values(settings) == {"betas": [0.9, 0.99], "foreach": None}
 
 
 # --- result and seeding ---------------------------------------------------------

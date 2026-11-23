@@ -194,9 +194,10 @@ The rules the trainer relies on:
   `with`: if `fit` raises, the run is recorded as failed, with its traceback.
 - **A sink failure raises `SinkError`.** A run never looks successful when its results
   weren't stored.
-- **Event names:** `train/loss/<term>`, `train/loss/total`, `train/lr`,
-  `train/epoch_seconds`, `eval/<split>/<metric>`, and, for saved files, `checkpoint/best`, `checkpoint/last`
-  and `model/<node>` (§7).
+- **Event names:** `trainer/settings` (a message, once per fit), `train/loss/<term>`,
+  `train/loss/total`, `train/lr`, `train/epoch_seconds`, `eval/<split>/<metric>`, and,
+  for saved files, `checkpoint/best`, `checkpoint/last`, `checkpoint/last_weights` and
+  `model/<node>` (§7).
 
 ---
 
@@ -264,11 +265,10 @@ its tests are the reference; this section summarises them. For a runnable tour, 
 
 | File           | Contents                                                                                                            |
 | -------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `trainer.py`   | `Trainer`; the checks run before training (`check_reads`, `check_validation`, `check_optimizer`, `check_scheduler`) |
+| `trainer.py`   | `Trainer`, `seed_everything`; the checks run before training (`check_reads`, `check_validation`, `check_optimizer`, `check_scheduler`) |
 | `state.py`     | `TrainingState`, `StepOutput`, `TrainingResult`, and the `Precision`, `SchedulerInterval`, `StopReason` types       |
 | `steps.py`     | `default_step`, and the helpers it is built from: `forward_and_loss`, `backward`, `optimizer_step`                  |
 | `callbacks.py` | `Callback` and its `HOOKS`; `LossWeightSchedule`, `EarlyStopping`, `ModelCheckpoint`, `EMAUpdate`                   |
-| `seed.py`      | `seed_everything`                                                                                                   |
 
 Everyday imports: `from lwfm.training import Trainer, Callback, seed_everything`.
 
@@ -357,7 +357,11 @@ A step that calls `.backward()` itself opts out of them on purpose, and in plain
 - **Custom steps.** With `"fp16"` or k > 1, a `step_fn` that never calls
   `steps.backward` is refused after its first batch, because its gradients would be
   silently wrong.
-- **Logging.** Every `log_every_n_steps` optimizer steps, the trainer logs
+- **Logging.** Before training, the trainer writes one `trainer/settings` message:
+  the loop settings, `torch.initial_seed()`, the optimizer's type and JSON-safe
+  defaults, the scheduler and its interval, and the callbacks' class names. So every
+  run records its precision and seed, which a fair comparison needs. Every
+  `log_every_n_steps` optimizer steps, the trainer logs
   `train/loss/<term>`, `train/loss/total` (for the batch that completed the step) and
   `train/lr` (`train/lr/<i>` with several parameter groups). After each complete epoch
   it logs `train/epoch_seconds`, which includes data loading but not validation. The
@@ -388,7 +392,7 @@ A step that calls `.backward()` itself opts out of them on purpose, and in plain
 | Partial accumulation group               | stepped at epoch end, scaled by 1/k                         | Gradients never cross epochs, and it works for loaders without `len()`                        |
 | `last.pt`                                | the full `TrainingState.state_dict()`                       | Resume can read it later without a format change                                              |
 | Custom step with fp16 or accumulation    | refused if `steps.backward` wasn't used                     | Otherwise the gradients are silently wrong                                                    |
-| `ModelCheckpoint` without a metric       | `last.pt` only, unless `monitored_metric` is given          | Fixed-schedule comparisons keep final weights, not a best epoch (§6.9)                        |
+| `ModelCheckpoint` without a metric       | `last.pt` + `last_weights.pt`; `best.pt` needs a metric     | Fixed-schedule comparisons keep final weights, not a best epoch (§6.9)                        |
 
 ### 3.3 Tests
 
@@ -1420,6 +1424,7 @@ that doesn't exist yet.
 | File                                | Contents                                                                                       | Used for                                           | Load with                                                                               |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `student.pt`, `checkpoints/best.pt` | `graph.deployable_model("student").state_dict()`                                               | deployment, the final test, benchmarks, next stage | the same architecture code, then `load_state_dict(torch.load(path, weights_only=True))` |
+| `checkpoints/last_weights.pt` | `graph.deployable_model(node).state_dict()` at the end of fit | the final weights, e.g. for fixed-schedule comparisons and model size | as `best.pt` |
 | `checkpoints/last.pt` | `TrainingState.state_dict()`: graph, loss, optimizer, scheduler, grad scaler, `global_step`, `epoch` | resuming (F17, not built yet) | `torch.load(path, weights_only=True)`; `resume_from=` comes with F17 |
 
 Design decisions:
@@ -1545,8 +1550,13 @@ from callback hooks.
 # lwfm/training/callbacks.py
 class ModelCheckpoint(Callback):
     """Saves one node's weights as `best.pt` whenever `monitored_metric` improves
-    (only if one is given), and the full training state as `last.pt` when fit ends,
-    including after Ctrl-C.
+    (only if one is given). When fit ends, including after Ctrl-C or a crash (check
+    `result.stop_reason` to tell), saves the full training state as `last.pt` and
+    the node's final weights as `last_weights.pt`.
+
+    `best.pt` and `last_weights.pt` hold `deployable_model(node).state_dict()`
+    alone: no teachers or training-only nodes, so they load into a fresh module and
+    their size is the model's size. `last.pt` is for resuming and inspection.
 
     Files go in `run_dir/subdir`. Each save is written atomically, then announced as
     an `artifact` event whose path is relative to `run_dir`, so the run directory can
@@ -1569,6 +1579,7 @@ class ModelCheckpoint(Callback):
         self.save_last = save_last
         self.best_path = self.run_dir / subdir / "best.pt"
         self.last_path = self.run_dir / subdir / "last.pt"
+        self.last_weights_path = self.run_dir / subdir / "last_weights.pt"
         self.best_value: float | None = None
 
     def on_fit_start(self, state: "TrainingState") -> None:
@@ -1590,13 +1601,23 @@ class ModelCheckpoint(Callback):
         value = metrics[self.monitored_metric]
         if improved(value, self.best_value, self.goal):
             self.best_value = value
-            # The deployable module only: no teachers, no training-only projectors
-            weights = state.graph.deployable_model(self.node).state_dict()
-            self._save(state, weights, self.best_path, "checkpoint/best")
+            self._save(
+                state, self._node_weights(state), self.best_path, "checkpoint/best"
+            )
 
     def on_fit_end(self, state: "TrainingState", result: "TrainingResult") -> None:
         if self.save_last:
             self._save(state, state.state_dict(), self.last_path, "checkpoint/last")
+            self._save(
+                state,
+                self._node_weights(state),
+                self.last_weights_path,
+                "checkpoint/last_weights",
+            )
+
+    def _node_weights(self, state: "TrainingState") -> dict:
+        # The deployable module only: no teachers, no training-only projectors
+        return state.graph.deployable_model(self.node).state_dict()
 
     def _save(
         self, state: "TrainingState", contents: dict, path: Path, event_name: str
@@ -1649,8 +1670,8 @@ Points to note:
 - **`last.pt` holds the full training state**, and holds only tensors and plain Python
   values, so it loads with `weights_only=True`.
 - **When not to save the best epoch:** in fixed-schedule comparisons such as kd_plan's
-  E0–E3 (§6.9). There, leave `monitored_metric` unset (the default), so only `last.pt` is
-  written, or save the final weights as in 7.3. Choosing a best epoch per run gives each run a different
+  E0–E3 (§6.9). There, leave `monitored_metric` unset (the default), so only `last.pt` and
+  `last_weights.pt` (the final weights alone) are written. Choosing a best epoch per run gives each run a different
   stopping point, so the comparison no longer measures the technique alone.
 
 ### 7.6 Gaps in the existing results code
