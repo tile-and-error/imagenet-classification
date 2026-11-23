@@ -542,7 +542,10 @@ TEACHERS = {
     ),
     "dinov2_b14": ModelSpec(  # 84.5, self-supervised; code + weights from GitHub
         lambda p: DinoV2WithEmbed(
-            torch.hub.load("facebookresearch/dinov2", "dinov2_vitb14_lc", pretrained=p)
+            # ":main" pins the branch, so a cached copy loads without internet access
+            torch.hub.load(
+                "facebookresearch/dinov2:main", "dinov2_vitb14_lc", pretrained=p
+            )
         ),
         dim=768,
         input_size=224,
@@ -811,19 +814,34 @@ def projector_node(student: str, teacher: str) -> ModelNode:
 
 
 class KD(nn.Module):
-    """Hinton KD: T^2 * KL(softmax(z_t/T) || softmax(z_s/T))."""
+    """Hinton KD: T^2 * KL(softmax(z_t/T) || softmax(z_s/T)).
+
+    weight: per-class weights w (e.g. data.class_weights()), as for weighted CE. Each
+    image's KL is then weighted by w of its true class: T^2 * sum_i w_yi KL_i / sum_i
+    w_yi. Unweighted KD is dominated by the majority class: with "other" at 80 % of
+    the images and of the teacher's probability mass, students first learn to always
+    predict "other". Weighting gives each class an equal share of the KD loss, as the
+    weighted CE does. It needs the labels, so it reads targets.class too.
+    """
 
     reads = LOGITS
 
-    def __init__(self, T: float = 4.0):
+    def __init__(self, T: float = 4.0, weight: Tensor | None = None):
         super().__init__()
         self.T = T
+        self.weighted = weight is not None  # recorded in the manifest
+        if self.weighted:
+            self.register_buffer("weight", weight)  # moves with composer.to(device)
+            self.reads = [*LOGITS, "targets.class"]
 
-    def forward(self, z_s: Tensor, z_t: Tensor) -> Tensor:
+    def forward(self, z_s: Tensor, z_t: Tensor, y: Tensor | None = None) -> Tensor:
         T = self.T
-        return T**2 * F.kl_div(
-            F.log_softmax(z_s / T, 1), F.softmax(z_t / T, 1), reduction="batchmean"
-        )
+        log_p_s, p_t = F.log_softmax(z_s / T, 1), F.softmax(z_t / T, 1)
+        if not self.weighted:
+            return T**2 * F.kl_div(log_p_s, p_t, reduction="batchmean")
+        kl = F.kl_div(log_p_s, p_t, reduction="none").sum(1)  # one KL per image
+        w = self.weight[y]
+        return T**2 * (w * kl).sum() / w.sum()
 
 
 class DKD(nn.Module):
@@ -1096,6 +1114,7 @@ class Setup:
     ToStudentClasses); None uses log(number of "other" classes).
     teacher_head: "linear" or "mlp" to use a head trained in E0c instead of the
     teacher's ImageNet logits (other_shift is then unused).
+    weighted_kd: weight the KD loss by class, with the same weights as the CE (see KD).
     """
 
     student: str = "resnet18"
@@ -1106,6 +1125,7 @@ class Setup:
     ce: bool = True
     other_shift: float | None = None
     teacher_head: str | None = None
+    weighted_kd: bool = False
 
     @property
     def needs_teacher(self) -> bool:
@@ -1129,7 +1149,9 @@ class Setup:
                 )
             )
         if self.logit:
-            loss = self.logit()
+            # weighted_kd passes the CE's class weights (only KD accepts them)
+            extra = {"weight": data.class_weights()} if self.weighted_kd else {}
+            loss = self.logit(**extra)
             w = 1.0 if self.alpha is None else self.alpha
             losses.append(LossBinding(type(loss).__name__, loss, loss.reads, weight=w))
         if self.embed:
@@ -1308,6 +1330,11 @@ def run(
         return run_dir
 
     cfg = setup.train_config(budget, data, overrides)
+    model = setup.student + (
+        f" + teacher {setup.teacher}" if setup.needs_teacher else ""
+    )
+    print(f"\n>>> train {name}: {model}, {cfg.epochs} epochs, seed {seed}")
+    start = time.perf_counter()
     torch.manual_seed(seed)  # fixes the student's initial weights
     nodes, losses = setup.build(data, pretrained)
     graph = ExecutionGraph(nodes).to(device)
@@ -1391,7 +1418,19 @@ def run(
         sink.write(RunEvent("artifact", "student_weights", run_dir / "student.pt"))
         for key, value in inference_cost(student, device, data.spec.image_size).items():
             sink.write(RunEvent("scalar", f"cost/{key}", value))
+    print_done(name, run_dir, start)
     return run_dir
+
+
+def print_done(name: str, run_dir: Path, start: float) -> None:
+    # One line per finished run: its headline numbers and how long it took
+    summary = json.loads((run_dir / "summary.json").read_text())
+    keys = ("eval/val/bal_acc", "eval/test/bal_acc", "eval/test/macro_f1")
+    scores = ", ".join(
+        f"{k.removeprefix('eval/')} {summary[k]:.4f}" for k in keys if k in summary
+    )
+    minutes = (time.perf_counter() - start) / 60
+    print(f"<<< done {name}: {scores} ({minutes:.1f} min)", flush=True)
 
 
 def evaluate_teacher(
@@ -1414,6 +1453,8 @@ def evaluate_teacher(
     if completed(run_dir):
         return run_dir
     cfg = replace(MAIN, **(overrides or {}))  # only the eval batch settings are used
+    print(f"\n>>> evaluate {name}: teacher {teacher} alone, no training")
+    start = time.perf_counter()
     node = teacher_node(teacher, data, pretrained, other_shift, teacher_head)
     graph = ExecutionGraph([node]).to(device)
     shapes = graph.preflight(to_device(next(iter(data.loader("val", 8))), device))
@@ -1454,6 +1495,7 @@ def evaluate_teacher(
             node.module, device, data.spec.image_size
         ).items():
             sink.write(RunEvent("scalar", f"cost/{key}", value))
+    print_done(name, run_dir, start)
     return run_dir
 
 

@@ -10,7 +10,7 @@ experiment changes one thing.
 
 | File | What it holds |
 |---|---|
-| [`experiments/kd/kd_e0_e3.ipynb`](experiments/kd/kd_e0_e3.ipynb) | E0–E3, results table and curves, with explanations. Three modes: `SMOKE` (wiring check, minutes), `LOCAL_TRIAL` (default: the real pipeline with short budgets, ~a day on a CPU) and full runs (GPU) |
+| [`experiments/kd/kd_e0_e3.ipynb`](experiments/kd/kd_e0_e3.ipynb) | E0–E3, results table and curves, with explanations. Three modes: `SMOKE` (wiring check, minutes), `LOCAL_TRIAL` (default without a CUDA GPU: the real pipeline with short budgets, ~a day on a CPU) and full runs (default on a CUDA GPU) |
 | [`experiments/kd/parts.py`](experiments/kd/parts.py) | Reusable parts: dataset and model registries, `make_split`, KD losses, metrics, cost, training loop, `Setup`, `run`, `Experiment` |
 
 ## Summary: what was added and how KD works now
@@ -212,6 +212,8 @@ whose students score best on val teaches E1–E3.
 ```python
 Setup("resnet18")                                         # baseline: weighted CE only
 Setup("resnet18", logit=partial(KD, T=4), alpha=0.9)      # 0.1·CE + 0.9·KD
+Setup("resnet18", logit=partial(KD, T=4), alpha=0.9,
+      weighted_kd=True)                                   # ... KD weighted by class
 Setup("vit_ti", logit=partial(DKD, beta=8.0))             # CE + DKD (ramped)
 Setup("resnet18", embed=EmbedCos)                         # CE + cosine to teacher embed
 Setup("vit_ti", embed=EmbedCos, ce=False)                 # label-free, then a probe
@@ -252,7 +254,13 @@ The class → ImageNet-1k map comes from `download/create_imagenet_mapping.py`.
   to trail from scratch on ~70k images, since it lacks a CNN's built-in locality, and
   DeiT showed that ViTs gain the most from a CNN teacher.
 - **Imbalance.** "Other" is 80 % (10 + 40) or 95 % (10 + 190) of the data.
-  - Training uses class-weighted CE, `wᶜ = N / (C·nᶜ)`. KD terms are unweighted.
+  - Training uses class-weighted CE, `wᶜ = N / (C·nᶜ)`.
+  - KD terms are unweighted by default. Plain KD is then dominated by "other" (80 % of
+    the images and of the teacher's probability mass): in the debug run, KD students at
+    α = 0.9 first learned to always predict "other", while their weighted CE rose.
+    `Setup(weighted_kd=True)` weights each image's KL by its class weight,
+    `T²·Σᵢ w_yᵢ KLᵢ / Σᵢ w_yᵢ`, so each class gets an equal share, as in the CE. E1 tests
+    it against plain KD at every (T, α). Only `KD` supports it so far.
   - Runs are chosen and reported on **balanced accuracy** (macro recall; chance is
     9.1 %) and macro-F1. Top-5 is added for ≥ 100 classes.
 - **Teacher "other" logit.** Prior-corrected, with the shift chosen on val by
@@ -282,7 +290,7 @@ The class → ImageNet-1k map comes from `download/create_imagenet_mapping.py`.
 | `MAIN` | 100 epochs, 5 warmup epochs then cosine | Reported results, 3 seeds |
 | `LONG` | 300 epochs, same shape | Checks whether KD's gain grows with training time |
 
-**Local trial** (`LOCAL_TRIAL = True`, for a laptop CPU):
+**Local trial** (`LOCAL_TRIAL`, on automatically without a CUDA GPU):
 
 - The budgets become 3 / 6 / 10 epochs, each capped at 30 steps of 64 images.
 - Evaluation uses 1,024 images, drawn in a fixed shuffled order.
@@ -327,7 +335,7 @@ The DINOv2 wrapper's attribute names haven't been checked against the real model
 | **E0a** | Each teacher alone: choose its `other_shift` on val, then val + test metrics, per-class test recall, teacher cost. **Inference only** | shift: best val macro-F1 |
 | **E0b** | Baseline, weighted CE, no teacher: `FAST` ×1, `MAIN` ×3 seeds, `LONG` ×1 | — |
 | **E0c** | Linear and MLP heads on the frozen teacher; each teacher variant (mapped logits, linear, mlp) scored alone, then used for KD (T = 4, α = 0.9, `FAST`) with each student | variant: best mean student val bal. acc |
-| **E1** | KD sweep, T ∈ {1, 2, 4} × α ∈ {0.5, 0.9}, total = (1−α)·CE + α·KD | best on val → `MAIN` ×3 + `LONG` ×1 |
+| **E1** | KD sweep, T ∈ {1, 2, 4} × α ∈ {0.5, 0.9} × {plain, class-weighted KD}, total = (1−α)·CE + α·KD | best on val → `MAIN` ×3 + `LONG` ×1 |
 | **E2** | Best E1 KD vs DKD (β = 0.5, β = 8; ramp over 20 epochs) vs DIST, each + CE | top 2 → `MAIN` ×3 |
 | **E3** | CE + EmbedCos; CE + EmbedMSE; best E2 + EmbedCos; EmbedCos only + linear probe | best → `MAIN` ×3 |
 

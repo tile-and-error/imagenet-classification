@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Map Tiny ImageNet class folders (000-199) to ImageNet-1k labels.
 
-    python tiny_imagenet_mapping.py data/tiny-imagenet
+    python download/create_imagenet_mapping.py data/tiny-imagenet
 
 Writes <dir>/imagenet_mapping.json: {folder: {wnid, name, imagenet_1k}}, where
 imagenet_1k is the ImageNet-1k class index, or null for the 18 Tiny ImageNet classes
