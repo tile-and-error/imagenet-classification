@@ -8,7 +8,7 @@ from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
 from lwfm.core.losses import LossBinding, LossComposer
 from lwfm.evaluation.metrics import MetricBinding
 
-READS = ["student.logits", "targets.class"]
+from conftest import CE_READS
 
 
 class Lambda(nn.Module):
@@ -126,7 +126,7 @@ def test_inputs_and_targets_with_different_batch_sizes_fail():
 
 def test_loss_failure_names_the_loss():
     graph = ExecutionGraph([student()])
-    bad = LossComposer([LossBinding("bad", lambda x, y: x @ y.float(), READS)])
+    bad = LossComposer([LossBinding("bad", lambda x, y: x @ y.float(), CE_READS)])
     sample = batch()
     with pytest.raises(RuntimeError) as info:
         bad(sample, graph(sample))
@@ -138,7 +138,7 @@ def test_loss_failure_names_the_loss():
 def test_metric_failure_names_the_metric():
     graph = ExecutionGraph([student()])
     swapped = MetricBinding(
-        "swapped", MulticlassAccuracy(num_classes=10), list(reversed(READS))
+        "swapped", MulticlassAccuracy(num_classes=10), list(reversed(CE_READS))
     )
     sample = batch()
     with pytest.raises(Exception) as info:  # noqa: B017 (torchmetrics' own error)

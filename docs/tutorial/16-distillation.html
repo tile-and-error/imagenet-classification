@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>16. Distillation with the Trainer</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><span><a href="../index.html">Docs</a> / <a href="index.html">lwfm tutorial</a></span><span data-slide-counter>16</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>16. Distillation: a teacher is just another node</h1>
+
+<p class="lead">A teacher is a second <code class="l">ModelNode</code> with <code>frozen=True</code>, and the distillation loss is one more <code class="l">LossBinding</code>. The <code>fit</code> call is the same as on slide 13: the trainer has no special case for teachers.</p>
+<pre class="mermaid">flowchart LR
+    IMG["inputs.image"] --> S["ModelNode 'student'&lt;br/&gt;small model, trained"]
+    IMG --> T["ModelNode 'teacher'&lt;br/&gt;frozen=True"]
+    S -- "student.logits" --> CE["LossBinding 'ce'"]
+    Y["targets.class"] --> CE
+    S -- "student.logits" --> KD["LossBinding 'kd'"]
+    T -- "teacher.logits" --> KD
+    CE --> SUM["LossComposer: 0.5·CE + w·KD"]
+    KD --> SUM
+    SUM --> BW["backward: only the student learns"]</pre>
+<pre class="code"><code class="language-python">class KDLoss(nn.Module):                                  # torch: a plain module, one number out
+    def __init__(self, temperature=4.0):
+        super().__init__()
+        self.t = temperature
+
+    def forward(self, student_logits, teacher_logits):    # argument order = binding's names
+        s = F.log_softmax(student_logits / self.t, dim=-1)
+        t = F.log_softmax(teacher_logits / self.t, dim=-1)
+        return F.kl_div(s, t, log_target=True, reduction=&quot;batchmean&quot;) * self.t**2
+
+# small_student: a cheaper ModelNode named &quot;student&quot; (it sees the image at half resolution)
+teacher = ModelNode(&quot;teacher&quot;,
+                    copy.deepcopy(graph.deployable_model(&quot;student&quot;)),  # lwfm: trained on slide 15
+                    inputs=&quot;inputs.image&quot;, outputs=&quot;logits&quot;,
+                    frozen=True)                           # lwfm: no gradients, always in eval mode
+kd_graph = ExecutionGraph([small_student, teacher])        # lwfm: same class, two nodes
+kd_loss = LossComposer([
+    LossBinding(&quot;ce&quot;, nn.CrossEntropyLoss(), CE_READS, weight=0.5),
+    LossBinding(&quot;kd&quot;, KDLoss(), [&quot;student.logits&quot;, &quot;teacher.logits&quot;], weight=0.5),
+])
+result = Trainer(device=&quot;cpu&quot;, max_epochs=3, log_every_n_steps=20).fit(
+    kd_graph, train_loader, kd_loss,
+    torch.optim.SGD(small_student.parameters(), lr=0.1),  # torch: only the student is optimised
+    val_loader=val_loader, metrics=metrics,
+    # lwfm: the KD weight rises from 0 to 0.5 over the first 20 steps
+    callbacks=[LossWeightSchedule(&quot;kd&quot;, lambda step: 0.5 * min(1.0, step / 20))],
+    output_sink=ConsoleSink(),
+)</code></pre>
+<pre class="output">...
+[step 60] train/loss/ce = 0.9627          # each loss term is logged by its binding name
+[step 60] train/loss/kd = 1.77
+[step 60] train/loss/total = 1.366
+...
+[step 60] eval/val/top1 = 0.6125
+teacher unchanged: True</pre>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">F.log_softmax</code>, <code class="t">F.kl_div</code> — the KL divergence between the softened teacher and student distributions.</li><li><code class="t">copy.deepcopy</code> — a separate copy of the trained weights, used as the teacher.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">ModelNode(..., frozen=True)</code> — sets <code>requires_grad=False</code>, runs under <code class="t">no_grad</code>, and stays in eval mode even when the trainer calls <code>graph.train()</code>.</li><li><code class="l">LossWeightSchedule(binding_name, weight_at_step)</code> — sets a binding's weight to <code>weight_at_step(global_step)</code> before every batch.</li><li><strong>Optimizer check</strong> — leave a trainable node (e.g. a projector) out of the optimizer, and <code>fit</code> refuses to start, naming it (slide 18).</li></ul></div></div>
+<div class="why"><strong>Why?</strong> Distillation is wiring, not a new training loop: one node and one loss entry. Several teachers mean more nodes with distinct names. The deployable model is still just <code class="l">kd_graph.deployable_model("student")</code> (slide 8), with no teacher inside it.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="15-callbacks.html">← 15. Callbacks</a><a rel="next" href="17-saving.html">17. Saving trained models →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

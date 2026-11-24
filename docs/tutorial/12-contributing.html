@@ -19,7 +19,7 @@
 </head>
 <body>
 <main>
-<header class="top"><a href="index.html">lwfm tutorial</a><span>12 / 12</span>
+<header class="top"><span><a href="../index.html">Docs</a> / <a href="index.html">lwfm tutorial</a></span><span data-slide-counter>12</span>
 <span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
 <h1>12. Getting started</h1>
 
@@ -33,8 +33,11 @@ uv run --with pyright pyright lwfm      # type check</code></pre>
 <table>
   <tr><td><code>PLAN.md</code></td><td>The source of truth: what to build, in which order, and why.</td></tr>
   <tr><td><code>lwfm/core/</code></td><td>Names, <code class="l">ModelNode</code>, <code class="l">ExecutionGraph</code>, losses, <code class="l">to_device</code>.</td></tr>
-  <tr><td><code>lwfm/models/</code>, <code>lwfm/evaluation/</code>, <code>lwfm/results/</code></td><td>model builders (coming); <code class="l">MetricBinding</code>, <code class="l">Evaluator</code>; events, router, sinks.</td></tr>
-  <tr><td><code>examples/building_blocks.ipynb</code></td><td>Everything on these slides, runnable.</td></tr>
+  <tr><td><code>lwfm/models/</code>, <code>lwfm/evaluation/</code>, <code>lwfm/results/</code></td><td>model builders (coming); <code class="l">MetricBinding</code>, <code class="l">CurveBinding</code>, <code class="l">Evaluator</code>; events, router, sinks, plots.</td></tr>
+  <tr><td><code>lwfm/training/</code></td><td>The <code class="l">Trainer</code>, its step functions, <code class="l">TrainingState</code> and callbacks.</td></tr>
+  <tr><td><code>examples/building_blocks.ipynb</code></td><td>Everything on slides 1–12, runnable.</td></tr>
+  <tr><td><code>examples/trainer.ipynb</code></td><td>Everything on slides 13–18 (the <code class="l">Trainer</code>), runnable.</td></tr>
+  <tr><td><code>examples/student_spare_ema.ipynb</code>, <code>examples/roc_plot_sink.ipynb</code></td><td>Keeping an EMA copy of the student during distillation; plotting ROC and precision-recall curves and a confusion matrix with <code class="l">PlotSink</code>.</td></tr>
   <tr><td><code>tests/unit/</code></td><td>One test file per module.</td></tr>
 </table>
 
@@ -49,13 +52,13 @@ uv run --with pyright pyright lwfm      # type check</code></pre>
 
 <h3>What's done, what's next (Phase 1)</h3>
 <table>
-  <tr><td class="ok">done</td><td>Graph building blocks and the preflight shape check, losses, metric bindings and the evaluator (top-1/top-5), events and sinks.</td></tr>
-  <tr><td class="todo">next</td><td>Data modules (fake data, ImageFolder, fixed splits), <code class="l">Trainer</code>, benchmarks, checkpoints, stages and recipe, the <code>python -m lwfm.run</code> command.</td></tr>
+  <tr><td class="ok">done</td><td>Graph building blocks and the preflight shape check, losses, metric bindings and the evaluator (top-1/top-5), events and sinks (files in JSON, YAML or CSV, and plots). The <code class="l">Trainer</code>, its callbacks and checkpoints (Part 2, slides 13–18).</td></tr>
+  <tr><td class="todo">next</td><td>Data modules (fake data, ImageFolder, fixed splits), benchmarks, resuming training, stages and recipe, the <code>python -m lwfm.run</code> command.</td></tr>
 </table>
 <p class="muted">Rule from the plan: no distillation or compression code until every Phase 1 test passes.</p>
 
 </main>
-<nav class="pager"><a rel="prev" href="11-design.html">← 11. Design decisions</a><span class="off">.</span></nav>
+<nav class="pager"><a rel="prev" href="11-design.html">← 11. Design decisions</a><a rel="next" href="13-trainer.html">13. The Trainer →</a></nav>
 <script>hljs.highlightAll();</script>
 </body>
 </html>

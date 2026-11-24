@@ -6,20 +6,7 @@ from lwfm.results.events import RunEvent
 from lwfm.results.router import OutputRouter
 from lwfm.results.sinks import LocalFileSink, OutputSink, SinkError
 
-
-class ListSink(OutputSink):
-    def __init__(self, log=None):
-        self.events = []
-        self.closed = False
-        self.log = log
-
-    def write(self, event):
-        self.events.append(event)
-        if self.log is not None:
-            self.log.append((self, event.name))
-
-    def close(self):
-        self.closed = True
+from conftest import ListSink
 
 
 class BrokenSink(OutputSink):
@@ -46,16 +33,14 @@ def test_router_is_an_output_sink_and_broadcasts_in_order():
     assert first.closed and second.closed
 
 
-def test_normal_exit_records_completed_and_closes():
-    sink = ListSink()
+def test_normal_exit_records_completed_and_closes(sink):
     with OutputRouter(sink) as router:
         router.write(RunEvent("scalar", "train/loss/total", 1.0))
     assert statuses(sink) == ["completed"]
     assert sink.closed
 
 
-def test_exception_records_traceback_and_failed_then_propagates():
-    sink = ListSink()
+def test_exception_records_traceback_and_failed_then_propagates(sink):
     with pytest.raises(RuntimeError, match="boom"), OutputRouter(sink):
         raise RuntimeError("boom")
     (message,) = [e for e in sink.events if e.kind == "message"]
@@ -65,8 +50,7 @@ def test_exception_records_traceback_and_failed_then_propagates():
     assert sink.closed
 
 
-def test_keyboard_interrupt_records_interrupted():
-    sink = ListSink()
+def test_keyboard_interrupt_records_interrupted(sink):
     with pytest.raises(KeyboardInterrupt), OutputRouter(sink):
         raise KeyboardInterrupt
     assert statuses(sink) == ["interrupted"]

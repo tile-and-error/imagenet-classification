@@ -19,7 +19,7 @@
 </head>
 <body>
 <main>
-<header class="top"><a href="index.html">lwfm tutorial</a><span></span>
+<header class="top"><span><a href="../index.html">Docs</a> / <a href="index.html">lwfm tutorial</a></span><span></span>
 <span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
 <h1>lwfm: how the framework works</h1>
 
@@ -32,6 +32,9 @@
   <p>In code, comments start with <code># torch:</code> or <code># lwfm:</code> for the same reason.</p>
 </div>
 
+<!-- Each slide's "N / total" counter is read from these lists by assets/nav.js:
+     to add a slide, create its page and add its <li> here, in order. -->
+<h3>Part 1: The building blocks</h3>
 <ol class="toc">
   <li><a href="01-idea.html">The idea</a></li>
   <li><a href="02-pipeline.html">Think of a pipeline as objects</a></li>
@@ -45,6 +48,15 @@
   <li><a href="10-interfaces.html">Where to extend</a></li>
   <li><a href="11-design.html">Design decisions</a></li>
   <li><a href="12-contributing.html">Getting started</a></li>
+</ol>
+<h3>Part 2: Training</h3>
+<ol class="toc" start="13">
+  <li><a href="13-trainer.html">The Trainer: training in one call</a></li>
+  <li><a href="14-training-loop.html">Inside fit: steps, epochs, validation</a></li>
+  <li><a href="15-callbacks.html">Callbacks</a></li>
+  <li><a href="16-distillation.html">Distillation: a teacher is just another node</a></li>
+  <li><a href="17-saving.html">Saving trained models</a></li>
+  <li><a href="18-settings-and-checks.html">Settings, sweeps and checks</a></li>
 </ol>
 <p class="muted">Use ← and → to move between slides. Every code snippet here was run against the current code.</p>
 
