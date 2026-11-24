@@ -37,3 +37,10 @@ Concise, mathematical, specific. Check claims rather than build on them. `ruff` 
 formatting and lint (see `pyproject.toml`). Keep the code self-documenting, don't add docstrings
 when you don't need to. An exception is the notenook `.ipynb` files, which need more explanations,
 and so heavier on comments.
+
+## Running code
+
+Don't run ad-hoc scripts you wrote yourself (training runs, sweeps, benchmarks, data
+processing) if they are likely to take more than about 30 seconds. Give the code and the
+command instead, and we will run it. Quick checks and queries are fine to run, as are
+the project's own `pytest`, `ruff` and `pyright`.
