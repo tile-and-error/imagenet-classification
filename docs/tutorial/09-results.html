@@ -19,7 +19,7 @@
 </head>
 <body>
 <main>
-<header class="top"><a href="index.html">lwfm tutorial</a><span>9 / 12</span>
+<header class="top"><span><a href="../index.html">Docs</a> / <a href="index.html">lwfm tutorial</a></span><span data-slide-counter>9</span>
 <span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
 <h1>9. Recording results</h1>
 
@@ -76,7 +76,7 @@ runs/demo/  events.jsonl  manifest.json  status.json  summary.json</pre>
 <h3>Saving weights: a file, plus an event that points to it</h3>
 <pre class="code"><code class="language-python">torch.save(model.state_dict(), &quot;runs/demo/student.pt&quot;)         # torch: the weights, in their own file
 router.write(RunEvent(&quot;artifact&quot;, &quot;fit/checkpoint&quot;, &quot;student.pt&quot;))  # lwfm: the log records where it is</code></pre>
-<p class="muted">Sinks never receive tensors: a one-number tensor becomes a plain number, anything bigger is refused. Large data goes to its own file; the event only says where it is.</p>
+<p class="muted">Sinks never receive tensors: a one-number tensor becomes a plain number, anything bigger is refused. Large data goes to its own file; the event only says where it is. <code class="l">save_artifact(run_dir, "student.pt", write, router, name=...)</code>, in <code>lwfm.results.artifacts</code>, does both lines in one call and writes the file atomically; <code>write</code> is e.g. <code>figure.savefig</code> for any matplotlib plot.</p>
 <table>
   <tr><th>File</th><th>Written</th><th>Holds</th></tr>
   <tr><td><code>manifest.json</code></td><td>at the start</td><td>versions, machine, your settings</td></tr>
@@ -84,8 +84,9 @@ router.write(RunEvent(&quot;artifact&quot;, &quot;fit/checkpoint&quot;, &quot;st
   <tr><td><code>events.jsonl</code></td><td>every event, at once</td><td>one line per event, so a crashed run keeps its data</td></tr>
   <tr><td><code>summary.json</code></td><td>at the end</td><td>the last value of every scalar</td></tr>
 </table>
+<p class="muted"><code class="l">LocalFileSink(run_dir, file_format="yaml")</code> or <code>"csv"</code> writes every one of these files in that format instead (<code>events.yaml</code>, <code>events.csv</code>, ...). <code class="l">PlotSink(plot_dir)</code>, in <code>lwfm.results.plots</code>, saves a PNG of each scalar against its step when it closes. It also draws every <code class="l">Curve</code> sent as a <code>table</code> event, by calling its <code>draw(axes)</code>: <code class="l">ROCCurve</code>, <code class="l">PRCurve</code>, <code class="l">ConfusionMatrix</code> (each built from tensors with torchmetrics) and <code class="l">Lines</code>, from <code>lwfm.results.curves</code>. It draws them as soon as they arrive, one PNG per step (<code>eval_val_roc_step120.png</code>). To get them during training, pass <code class="l">Trainer.fit(curves=[CurveBinding("roc", ROCCurve.from_scores, reads)])</code>: they are built at the last validation, or also every <code>curves_every_n_validations</code>-th; for a one-off, write <code>RunEvent("table", "eval/test/roc", ROCCurve.from_scores(scores, labels))</code> yourself. A plot of your own is one more dataclass with a <code>draw(axes)</code> method; <code>examples/roc_plot_sink.ipynb</code> builds one for a decision boundary.</p>
 <div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">total.detach()</code> — a tensor with no gradient attached. A one-number tensor is stored as a plain number; bigger tensors are refused (save a file instead).</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">RunEvent(kind, name, value, stage, step)</code> — kind is scalar, table, artifact, status or message.</li><li><code class="l">OutputRouter(*output_sinks)</code> — sends each event to every sink. Used with <code>with</code>, it records the final status even if the run crashes.</li><li><code class="l">OutputSink</code> — the interface. Code that produces results only depends on OutputSink; the router is one too.</li></ul></div></div>
-<div class="why"><strong>Why?</strong> Sinks sit outside the computation, and <strong>nothing reads back from them</strong>. Remove every sink and training computes exactly the same thing. Adding a new destination (CSV, MLflow) is a new sink, with no change to training code.</div>
+<div class="why"><strong>Why?</strong> Sinks sit outside the computation, and <strong>nothing reads back from them</strong>. Remove every sink and training computes exactly the same thing. Adding a new destination (plots, MLflow) is a new sink, with no change to training code.</div>
 
 </main>
 <nav class="pager"><a rel="prev" href="08-train-vs-infer.html">← 8. Training vs inference</a><a rel="next" href="10-interfaces.html">10. Where to extend →</a></nav>

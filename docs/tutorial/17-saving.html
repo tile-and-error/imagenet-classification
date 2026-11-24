@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>17. Saving trained models</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><span><a href="../index.html">Docs</a> / <a href="index.html">lwfm tutorial</a></span><span data-slide-counter>17</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>17. Saving trained models</h1>
+
+<p class="lead">Sinks record results, but never hold tensors (slide 9). So saving is two steps: write the weights to a file, then send an <code>artifact</code> event that holds the file's path. <code class="l">save_artifact</code> does both in one call, and <code class="l">ModelCheckpoint</code> uses it during training.</p>
+<pre class="code"><code class="language-python">from lwfm.training.callbacks import ModelCheckpoint       # lwfm
+
+run_dir = Path(tempfile.mkdtemp()) / &quot;demo_run&quot;
+with OutputRouter(LocalFileSink(run_dir)) as sink:         # lwfm: fit inside, so a crash is recorded
+    Trainer(device=&quot;cpu&quot;, max_epochs=3).fit(
+        graph, train_loader, loss, optimizer,
+        val_loader=val_loader, metrics=metrics,
+        callbacks=[ModelCheckpoint(run_dir, node=&quot;student&quot;, monitored_metric=&quot;top1&quot;)],  # lwfm
+        output_sink=sink,
+    )</code></pre>
+<pre class="output">['checkpoints', 'checkpoints/best.pt', 'checkpoints/last.pt', 'checkpoints/last_weights.pt',
+ 'events.jsonl', 'manifest.json', 'status.json', 'summary.json']
+checkpoint/best -> checkpoints/best.pt at step 20       # the artifact events in events.jsonl
+checkpoint/last -> checkpoints/last.pt at step 60
+checkpoint/last_weights -> checkpoints/last_weights.pt at step 60</pre>
+<pre class="mermaid">sequenceDiagram
+    participant T as Trainer (lwfm)
+    participant C as ModelCheckpoint (lwfm)
+    participant D as run directory
+    participant S as OutputSink (lwfm)
+    T->>C: on_validation_end(state, top1 = 0.9)
+    C->>C: better than the best so far?
+    C->>D: torch.save(student weights) to best.pt
+    C->>S: RunEvent("artifact", "checkpoint/best", "checkpoints/best.pt")</pre>
+<table>
+  <tr><th>File</th><th>Holds</th><th>Written</th></tr>
+  <tr><td><code>checkpoints/best.pt</code></td><td>the student's weights only (<code>deployable_model("student").state_dict()</code>)</td><td>whenever <code>monitored_metric</code> improves; only if one is given</td></tr>
+  <tr><td><code>checkpoints/last_weights.pt</code></td><td>the student's final weights only, in the same form as <code>best.pt</code></td><td>when training ends, including after Ctrl-C</td></tr>
+  <tr><td><code>checkpoints/last.pt</code></td><td>the full training state: graph, optimizer, scheduler, counters (for resuming)</td><td>when training ends, including after Ctrl-C</td></tr>
+</table>
+
+<h3>Loading the model back</h3>
+<pre class="code"><code class="language-python">restored = make_student()                                  # lwfm: rebuild the same architecture ...
+weights = torch.load(run_dir / &quot;checkpoints/best.pt&quot;, weights_only=True)  # torch: ... then load weights
+restored.module.load_state_dict(weights)                   # torch: from here on, a plain nn.Module
+Evaluator().evaluate(ExecutionGraph([restored]), val_loader, metrics, device=torch.device(&quot;cpu&quot;))</code></pre>
+<pre class="output">EvaluationResult(metric_values={'top1': 0.8999999761581421}, curves={})   # the best validation score, as saved</pre>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">state_dict()</code> / <code class="t">torch.save</code> — the weights as a dict of tensors, in a file.</li><li><code class="t">torch.load(..., weights_only=True)</code> — loads tensors only, never code, so a checkpoint can't run anything.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">ModelCheckpoint(run_dir, node, monitored_metric=None, goal="max")</code> — the run directory, which node to save, and which metric decides "best". <code>save_last=False</code> skips the two end-of-run files.</li><li><strong>Paths are relative</strong> to the run directory, so a run folder can be moved without breaking its records.</li><li><code class="l">save_artifact(run_dir, relative_path, write, sink, name=...)</code> — the same two steps for any file, e.g. a plot. Writes are atomic: a killed job leaves the previous file intact.</li></ul></div></div>
+<div class="why"><strong>Why?</strong> A file plus an event keeps the record small and readable, and lets each sink decide what an artifact means: the console prints it, and a future MLflow sink could upload it. Only the student is saved as "best": that is the model we ship and benchmark. To compare runs at a fixed schedule, leave <code>monitored_metric</code> unset and use <code>last_weights.pt</code>, so every run stops at the same point.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="16-distillation.html">← 16. Distillation</a><a rel="next" href="18-settings-and-checks.html">18. Settings, sweeps and checks →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

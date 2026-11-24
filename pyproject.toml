@@ -41,3 +41,6 @@ target-version = "py312"
 # SIM = flake8-simplify (Reduce Code to Simpler forms)
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-local-folder = ["conftest"]  # shared test helpers, imported by name
