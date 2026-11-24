@@ -6,7 +6,8 @@ from torchmetrics.classification import MulticlassAccuracy
 from lwfm.core.batch import to_device
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
 from lwfm.evaluation.evaluator import Evaluator
-from lwfm.evaluation.metrics import MetricBinding
+from lwfm.evaluation.metrics import CurveBinding, MetricBinding
+from lwfm.results.curves import ConfusionMatrix
 
 from conftest import CE_READS
 
@@ -145,6 +146,66 @@ def test_bad_inputs_fail_clearly(loader, metrics, error, match):
         Evaluator().evaluate(logits_graph(), loader, metrics, device=CPU)
 
 
+def confusion():
+    return CurveBinding("confusion", ConfusionMatrix.from_scores, CE_READS)
+
+
+def test_a_curve_is_built_from_the_whole_split_and_emitted(sink):
+    result = Evaluator().evaluate(
+        logits_graph(),
+        LOADER,  # two unequal batches
+        [top_k(1)],
+        curve_bindings=[confusion()],
+        device=CPU,
+        output_sink=sink,
+        training_step=7,
+    )
+    whole_split = ConfusionMatrix.from_scores(LOGITS, CLASSES)
+    assert result.curves == {"confusion": whole_split}
+    assert [(e.kind, e.name, e.value, e.step) for e in sink.events] == [
+        ("scalar", "eval/val/top1", pytest.approx(0.5), 7),
+        ("table", "eval/val/confusion", whole_split, 7),
+    ]
+
+
+def test_curve_values_reset_between_runs():
+    curves = [confusion()]
+    Evaluator().evaluate(
+        logits_graph(), LOADER, [top_k(1)], curve_bindings=curves, device=CPU
+    )
+    second = Evaluator().evaluate(
+        logits_graph(), LOADER[1:], [top_k(1)], curve_bindings=curves, device=CPU
+    )
+    assert sum(map(sum, second.curves["confusion"].matrix)) == 1  # one sample
+
+
+def test_a_curve_and_a_metric_cannot_share_a_name():
+    clash = CurveBinding("top1", ConfusionMatrix.from_scores, CE_READS)
+    with pytest.raises(ValueError, match="unique"):
+        Evaluator().evaluate(
+            logits_graph(), LOADER, [top_k(1)], curve_bindings=[clash], device=CPU
+        )
+
+
+def test_a_curve_reads_any_number_of_values_in_order():
+    shapes = CurveBinding(
+        "shapes",
+        lambda logits, classes, again: [
+            list(v.shape) for v in (logits, classes, again)
+        ],
+        ["student.logits", "targets.class", "inputs.logits"],
+    )
+    result = Evaluator().evaluate(
+        logits_graph(), LOADER, [top_k(1)], curve_bindings=[shapes], device=CPU
+    )
+    assert result.curves["shapes"] == [[4, 6], [4], [4, 6]]  # both batches joined
+
+
+def test_a_curve_must_read_what_its_build_function_takes():
+    with pytest.raises(ValueError, match="reads 1 values"):
+        CurveBinding("roc", ConfusionMatrix.from_scores, ["student.logits"])
+
+
 def test_to_device_moves_tensors_and_keeps_other_values():
     moved = to_device(batch([0, 1]), torch.device("meta"))
     assert moved["inputs"]["logits"].device.type == "meta"
@@ -164,4 +225,13 @@ def test_unknown_metric_input_fails_before_any_batch():
     with pytest.raises(GraphError, match="studnet.logits"):
         Evaluator().evaluate(
             logits_graph(), loader(), [typo], device=torch.device("cpu")
+        )
+    curve_typo = CurveBinding("roc", ConfusionMatrix.from_scores, typo.inputs)
+    with pytest.raises(GraphError, match="studnet.logits"):
+        Evaluator().evaluate(
+            logits_graph(),
+            loader(),
+            [top_k(1)],
+            curve_bindings=[curve_typo],
+            device=CPU,
         )

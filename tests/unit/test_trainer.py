@@ -7,7 +7,8 @@ from torchmetrics.classification import MulticlassAccuracy
 
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
 from lwfm.core.losses import LossBinding, LossComposer
-from lwfm.evaluation.metrics import MetricBinding
+from lwfm.evaluation.metrics import CurveBinding, MetricBinding
+from lwfm.results.curves import ConfusionMatrix
 from lwfm.results.router import OutputRouter
 from lwfm.results.sinks import LocalFileSink
 from lwfm.training import Callback, Trainer, TrainingResult, seed_everything
@@ -151,6 +152,25 @@ def test_val_every_n_steps_and_a_final_validation():
         graph, batches(5), loss, optimizer, val_loader=batches(1), metrics=accuracy()
     )
     assert [step for step, _ in result.history] == [2, 4, 5]
+
+
+def test_curves_are_drawn_at_every_validation(sink):
+    _, graph, loss, optimizer = setup()
+    confusion = CurveBinding("confusion", ConfusionMatrix.from_scores, CE_READS)
+    Trainer(device="cpu", max_epochs=1, val_every_n_steps=2).fit(
+        graph,
+        batches(5),
+        loss,
+        optimizer,
+        val_loader=batches(2),
+        metrics=accuracy(),
+        curves=[confusion],
+        output_sink=sink,
+    )
+    assert sink.steps_of("eval/val/confusion") == [2, 4, 5]
+    assert all(
+        sum(map(sum, e.value.matrix)) == 8 for e in sink.events if e.kind == "table"
+    )  # all 2 * 4 validation samples, each time
 
 
 def test_frozen_teacher_stays_in_eval_and_unchanged():
@@ -377,6 +397,9 @@ def test_val_loader_and_metrics_go_together():
         trainer.fit(graph, batches(1), loss, optimizer, val_loader=batches(1))
     with pytest.raises(ValueError, match="together"):
         trainer.fit(graph, batches(1), loss, optimizer, metrics=accuracy())
+    confusion = CurveBinding("confusion", ConfusionMatrix.from_scores, CE_READS)
+    with pytest.raises(ValueError, match="curves"):
+        trainer.fit(graph, batches(1), loss, optimizer, curves=[confusion])
 
 
 def test_empty_loader_fails():

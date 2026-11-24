@@ -315,7 +315,8 @@ sequenceDiagram
 |                                | `graph.deployable_model(node_name) -> nn.Module`                                                                               | The named node's module itself, sharing weights. No default: the graph doesn't know which node is the student.                                                                                                                |
 | `lwfm/core/losses.py`          | `LossBinding(name, loss, inputs, weight=1.0)`; `LossComposer(loss_bindings)`                                                   | `composer(batch, node_outputs) -> (total_loss, {name: detached loss term})`; raises `ValueError` for a non-finite or non-scalar loss.                                                                                         |
 | `lwfm/evaluation/metrics.py`   | `MetricBinding(name, metric, inputs)`; `binding.update(batch, node_outputs)`                                                   | `metric` is a torchmetrics `Metric`.                                                                                                                                                                                          |
-| `lwfm/evaluation/evaluator.py` | `Evaluator().evaluate(graph, data_loader, metric_bindings, *, device, split_name="val", output_sink=None, training_step=None)` | Returns `EvaluationResult(metric_values={name: float})`; see §3.6.                                                                                                                                                            |
+|                                | `CurveBinding(name, build, inputs)`                                                                                            | Keeps every batch's values (on the CPU), then `build(*values)` once per split, e.g. `ROCCurve.from_scores`. Memory grows with the split.                                                                          |
+| `lwfm/evaluation/evaluator.py` | `Evaluator().evaluate(graph, data_loader, metric_bindings, *, curve_bindings=(), device, split_name="val", output_sink=None, training_step=None)` | Returns `EvaluationResult(metric_values={name: float}, curves={name: table})`; each curve is written as the table `eval/<split>/<name>`. `Trainer.fit(curves=...)` passes them through at every validation; see §3.6. |
 | `lwfm/core/batch.py`           | `to_device(batch, device)`                                                                                                     | Moves tensors; keeps ids and paths.                                                                                                                                                                                           |
 
 **Design choices and their reasons**
@@ -562,6 +563,7 @@ class Evaluator:
         data_loader: Iterable[Batch],
         metric_bindings: Sequence[MetricBinding],
         *,
+        curve_bindings: Sequence[CurveBinding] = (),
         device: torch.device,
         split_name: str = "val",
         output_sink: OutputSink | None = None,
@@ -569,7 +571,7 @@ class Evaluator:
     ) -> EvaluationResult: ...  # implemented in lwfm/evaluation/evaluator.py
 ```
 
-`TrainingResult.global_step: int`; `EvaluationResult.metric_values: dict[str, float]`, keyed by binding name.
+`TrainingResult.global_step: int`; `EvaluationResult.metric_values: dict[str, float]` and `EvaluationResult.curves: dict[str, object]`, keyed by binding name.
 
 **The trainer does:** move batches to the device, `graph.train()`, forward, loss, `backward()`, optimizer step and zero-grad, step counting, optional validation. It is the own-loop example in `examples/building_blocks.ipynb` (§3.3) plus these. **It does not:** create runs or folders, read YAML, launch Slurm, or know which technique is in use. `output_sink=None` is the notebook default.
 
@@ -674,7 +676,9 @@ classDiagram
 |                            | `LocalFileSink(run_dir, manifest_fields=None, file_format="json")`          | See below. Refuses a directory that already holds a run.                                                                                                                           |
 |                            | `ConsoleSink(output_stream=sys.stdout)`                                     | One line per event: `[fit step 10] train/loss/total = 0.4321`.                                                                                                                     |
 |                            | `SinkError` (`RuntimeError`)                                                | A sink failed; names the sink and the event.                                                                                                                                       |
-| `lwfm/results/plots.py`    | `PlotSink(plot_dir)`                                                        | On close, one PNG per scalar (against its step) and per `table` of equal-length columns (first column on x), e.g. a ROC curve. Example: `examples/roc_plot_sink.ipynb`. |
+| `lwfm/results/plots.py`    | `PlotSink(plot_dir)`                                                        | On close, one PNG per scalar name (against its step); as each `table` arrives, one PNG per name and step: a `ROCCurve`, `PRCurve` or `ConfusionMatrix` in its standard form, other numeric columns as lines (first column on x). Example: `examples/roc_plot_sink.ipynb`. |
+| `lwfm/results/curves.py`   | `ROCCurve.from_scores(scores, labels)`, `PRCurve.from_scores(...)`, `ConfusionMatrix.from_scores(scores, labels, class_names=None)` | Common evaluation graphs as frozen dataclasses, built with torchmetrics (curve points plus AUC / average precision), sent as `table` event values. |
+| `lwfm/results/artifacts.py` | `save_artifact(run_dir, relative_path, write, output_sink, *, name, step=None)` | Writes a file into the run directory atomically with `write(path)`, then emits an `artifact` event with the relative path. Used by `ModelCheckpoint`, and for any custom file, e.g. `figure.savefig`. |
 | `lwfm/results/router.py`   | `OutputRouter(*output_sinks)`: `write(event)`, `close()`; a context manager | An `OutputSink` that sends every event to every sink in order.                                                                                                                     |
 | `lwfm/results/manifest.py` | `environment()`                                                             | Python/torch/torchvision versions, platform, CUDA device.                                                                                                                          |
 
@@ -732,14 +736,17 @@ repository/
 │   │   └── checkpoint.py
 │   ├── evaluation/
 │   │   ├── evaluator.py
-│   │   ├── metrics.py         # MetricBinding
+│   │   ├── metrics.py         # MetricBinding, CurveBinding
 │   │   └── benchmarks.py
 │   ├── orchestration/
 │   │   ├── experiment.py
 │   │   ├── recipe.py
 │   │   └── stages.py
 │   ├── results/
+│   │   ├── artifacts.py
+│   │   ├── curves.py
 │   │   ├── events.py
+│   │   ├── plots.py
 │   │   ├── router.py
 │   │   └── sinks.py
 │   ├── techniques/            # from Phase 2

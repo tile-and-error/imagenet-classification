@@ -13,7 +13,7 @@ from lwfm.core.graph import ExecutionGraph
 from lwfm.core.losses import LossComposer
 from lwfm.core.types import Batch
 from lwfm.evaluation.evaluator import Evaluator
-from lwfm.evaluation.metrics import MetricBinding
+from lwfm.evaluation.metrics import CurveBinding, MetricBinding
 from lwfm.results.events import RunEvent
 from lwfm.results.sinks import OutputSink
 from lwfm.training.callbacks import Callback, check_callbacks
@@ -97,6 +97,7 @@ class Trainer:
         *,
         val_loader: Iterable[Batch] | None = None,
         metrics: Sequence[MetricBinding] = (),
+        curves: Sequence[CurveBinding] = (),
         scheduler: LRScheduler | None = None,
         scheduler_interval: SchedulerInterval | None = None,
         callbacks: Sequence[Callback] = (),
@@ -104,8 +105,8 @@ class Trainer:
     ) -> TrainingResult:
         """Trains until a stopping condition is met, then returns the result."""
         # Every check runs before the first batch, so a mistake costs seconds, not a run
-        check_reads(graph, loss, metrics)
-        check_validation(val_loader, metrics)
+        check_reads(graph, loss, [*metrics, *curves])
+        check_validation(val_loader, metrics, curves)
         check_optimizer(graph, loss, optimizer)
         check_scheduler(scheduler, scheduler_interval, optimizer)
         check_callbacks(callbacks)
@@ -139,15 +140,15 @@ class Trainer:
         try:
             while self._stop_reason(state) is None:
                 epoch_completed = self._run_epoch(
-                    state, train_loader, val_loader, metrics, history
+                    state, train_loader, val_loader, metrics, curves, history
                 )
                 validate_per_epoch = not self.val_every_n_steps
                 if epoch_completed and val_loader is not None and validate_per_epoch:
-                    self._validate(state, val_loader, metrics, history)
+                    self._validate(state, val_loader, metrics, curves, history)
             # End on a validation result, unless the last step was just validated
             last_step_validated = bool(history) and history[-1][0] == state.global_step
             if val_loader is not None and not last_step_validated:
-                self._validate(state, val_loader, metrics, history)
+                self._validate(state, val_loader, metrics, curves, history)
         except (KeyboardInterrupt, Exception) as error:
             # Ctrl-C or a crash: callbacks still get on_fit_end (so "last" is saved),
             # then the original error propagates, for OutputRouter to record. A
@@ -175,6 +176,7 @@ class Trainer:
         train_loader: Iterable[Batch],
         val_loader: Iterable[Batch] | None,
         metrics: Sequence[MetricBinding],
+        curves: Sequence[CurveBinding],
         history: History,
     ) -> bool:
         """One pass over the train loader. Returns False if training stopped part-way,
@@ -211,7 +213,7 @@ class Trainer:
                 and state.global_step % self.val_every_n_steps == 0
             )
             if val_loader is not None and validation_due:
-                self._validate(state, val_loader, metrics, history)
+                self._validate(state, val_loader, metrics, curves, history)
             if self._stop_reason(state) is not None and not is_last_batch:
                 return False
         if batch_count == 0:
@@ -230,14 +232,17 @@ class Trainer:
         state: TrainingState,
         val_loader: Iterable[Batch],
         metrics: Sequence[MetricBinding],
+        curves: Sequence[CurveBinding],
         history: History,
     ) -> None:
         """Runs the metrics over `val_loader`, records them, and tells the callbacks."""
-        # The Evaluator logs eval/val/<metric> and restores the graph's train mode
+        # The Evaluator logs eval/val/<metric> and <curve>, and restores the graph's
+        # train mode
         evaluation = Evaluator().evaluate(
             state.graph,
             val_loader,
             metrics,
+            curve_bindings=curves,
             device=self.device,
             output_sink=state.output_sink,
             training_step=state.global_step,
@@ -368,22 +373,29 @@ def mark_last_batch(batches: Iterable[Batch]) -> Iterator[tuple[Batch, bool]]:
 
 
 def check_reads(
-    graph: ExecutionGraph, loss: LossComposer, metrics: Sequence[MetricBinding]
+    graph: ExecutionGraph,
+    loss: LossComposer,
+    metrics: Sequence[MetricBinding | CurveBinding],
 ) -> None:
-    """Checks that every name a loss or metric reads is produced by the graph."""
+    """Checks that every name a loss, metric or curve reads is produced by the graph."""
     # A typo in a loss or metric name fails here, listing the outputs that do exist
     graph.check_reads(name for binding in loss.loss_bindings for name in binding.inputs)
     graph.check_reads(name for binding in metrics for name in binding.inputs)
 
 
 def check_validation(
-    val_loader: Iterable[Batch] | None, metrics: Sequence[MetricBinding]
+    val_loader: Iterable[Batch] | None,
+    metrics: Sequence[MetricBinding],
+    curves: Sequence[CurveBinding],
 ) -> None:
-    """Checks that `val_loader` and `metrics` are given together or not at all."""
+    """Checks that `val_loader` and `metrics` are given together or not at all, and
+    that `curves` come with them."""
     if (val_loader is None) != (len(metrics) == 0):
         raise ValueError(
             "pass val_loader and metrics together: one is useless without the other"
         )
+    if curves and val_loader is None:
+        raise ValueError("curves are drawn at validation: pass val_loader and metrics")
 
 
 def check_optimizer(

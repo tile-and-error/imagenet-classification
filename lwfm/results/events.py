@@ -7,7 +7,8 @@ from torch import Tensor
 # What each kind of event carries. Only `scalar` and `status` values are checked in
 # `RunEvent.__post_init__`; the others are stored as given.
 #   scalar    one number per step: `train/loss/total`, `eval/val/top1`
-#   table     named columns of values, e.g. a ROC curve `{"fpr": [...], "tpr": [...]}`
+#   table     named columns of values, or a curve from `lwfm.results.curves`
+#             such as `ROCCurve` (stored as its fields: `{"fpr": [...], ...}`)
 #   artifact  the path of a file the run saved, e.g. a checkpoint `student.pt`
 #   status    a run state change (see `RunStatus`), sent by `OutputRouter` on exit
 #   message   free text such as a note or the traceback of a failed run
