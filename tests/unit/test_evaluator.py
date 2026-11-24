@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import pytest
 import torch
 from torch import nn
@@ -194,18 +196,32 @@ def test_a_curve_and_a_metric_cannot_share_a_name():
         )
 
 
+@dataclass(frozen=True)
+class Shapes:
+    shapes: list[list[int]]
+
+    def draw(self, axes):
+        pass
+
+
 def test_a_curve_reads_any_number_of_values_in_order():
     shapes = CurveBinding(
         "shapes",
-        lambda logits, classes, again: [
-            list(v.shape) for v in (logits, classes, again)
-        ],
+        lambda *values: Shapes([list(value.shape) for value in values]),
         ["student.logits", "targets.class", "inputs.logits"],
     )
     result = Evaluator().evaluate(
         logits_graph(), LOADER, [top_k(1)], curve_bindings=[shapes], device=CPU
     )
-    assert result.curves["shapes"] == [[4, 6], [4], [4, 6]]  # both batches joined
+    assert result.curves["shapes"].shapes == [[4, 6], [4], [4, 6]]  # batches joined
+
+
+def test_a_curve_must_build_something_drawable():
+    plain = CurveBinding("plain", lambda scores, labels: {"n": len(scores)}, CE_READS)
+    with pytest.raises(TypeError, match="'plain' built a dict, which has no draw"):
+        Evaluator().evaluate(
+            logits_graph(), LOADER, [top_k(1)], curve_bindings=[plain], device=CPU
+        )
 
 
 def test_a_curve_must_read_what_its_build_function_takes():

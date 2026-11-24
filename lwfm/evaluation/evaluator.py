@@ -7,6 +7,7 @@ from lwfm.core.batch import to_device
 from lwfm.core.graph import ExecutionGraph
 from lwfm.core.types import Batch
 from lwfm.evaluation.metrics import CurveBinding, MetricBinding
+from lwfm.results.curves import Curve
 from lwfm.results.events import RunEvent
 from lwfm.results.sinks import OutputSink
 
@@ -14,7 +15,7 @@ from lwfm.results.sinks import OutputSink
 @dataclass(frozen=True)
 class EvaluationResult:
     metric_values: dict[str, float]
-    curves: dict[str, object] = field(default_factory=dict)
+    curves: dict[str, Curve] = field(default_factory=dict)
 
 
 class Evaluator:

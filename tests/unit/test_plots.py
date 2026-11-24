@@ -1,13 +1,12 @@
-import pytest
 import torch
 from torch import nn
 
 from lwfm.core.graph import ExecutionGraph, ModelNode
 from lwfm.core.losses import LossBinding, LossComposer
 from lwfm.evaluation.metrics import CurveBinding
-from lwfm.results.curves import ConfusionMatrix, PRCurve, ROCCurve
+from lwfm.results.curves import ConfusionMatrix, Lines, PRCurve, ROCCurve
 from lwfm.results.events import RunEvent
-from lwfm.results.plots import PlotSink, is_columns
+from lwfm.results.plots import PlotSink
 from lwfm.results.router import OutputRouter
 from lwfm.training import Trainer
 
@@ -26,7 +25,7 @@ def test_scalars_and_curves_become_one_png_each(tmp_path):
         sink.write(
             RunEvent("scalar", "train/loss/total", torch.tensor(loss), step=step)
         )
-    roc = {"fpr": [0.0, 0.5, 1.0], "tpr": [0.0, 0.9, 1.0]}
+    roc = ROCCurve([0.0, 0.5, 1.0], [0.0, 0.9, 1.0], 0.7)
     sink.write(RunEvent("table", "eval/val/roc", roc))
     # A table is drawn when it arrives; the scalars only once they are all in
     assert png_names(tmp_path / "plots") == ["eval_val_roc.png"]
@@ -38,9 +37,8 @@ def test_scalars_and_curves_become_one_png_each(tmp_path):
 def test_events_that_cannot_be_plotted_are_ignored(tmp_path):
     sink = PlotSink(tmp_path)
     sink.write(RunEvent("scalar", "eval/test/top1", 0.9))  # no step
-    sink.write(
-        RunEvent("table", "per_class", [[0, 0.9], [1, 0.8]])
-    )  # rows, not columns
+    sink.write(RunEvent("table", "per_class", [[0, 0.9], [1, 0.8]]))  # no draw
+    sink.write(RunEvent("table", "columns", {"x": [0.0, 1.0], "y": [1.0, 2.0]}))
     sink.write(RunEvent("message", "note", "hello"))
     sink.close()
     assert png_names(tmp_path) == []
@@ -54,8 +52,15 @@ def test_curve_types_are_drawn(tmp_path):
     sink.write(RunEvent("table", "pr", PRCurve([0.5, 1.0], [1.0, 0.0], 0.5)))
     confusion = ConfusionMatrix([[5, 1], [2, 4]], ["cat", "dog"])
     sink.write(RunEvent("table", "confusion", confusion))
+    lines = Lines({"epoch": [1, 2], "top1": [0.5, 0.7], "top5": [0.8, 0.9]})
+    sink.write(RunEvent("table", "accuracy", lines))
     sink.close()
-    assert png_names(tmp_path) == ["confusion.png", "pr.png", "roc.png"]
+    assert png_names(tmp_path) == [
+        "accuracy.png",
+        "confusion.png",
+        "pr.png",
+        "roc.png",
+    ]
 
 
 def test_a_table_with_a_draw_method_draws_itself(tmp_path):
@@ -77,22 +82,6 @@ def test_each_validation_step_keeps_its_own_table_plot(tmp_path):
         "eval_val_roc_step100.png",
         "eval_val_roc_step200.png",
     ]
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        ({"x": [0.0, 1.0], "y": [1, 2]}, True),
-        ({"x": [0.0, 1.0], "y": [1.0, 2.0], "z": [3.0, 4.0]}, True),  # two y lines
-        ({"x": [0.0, 1.0]}, False),  # nothing to plot against
-        ({"x": [0.0, 1.0], "y": [1.0]}, False),  # unequal lengths
-        ({"x": [], "y": []}, False),
-        ({"x": [0.0], "y": ["a"]}, False),
-        ([[0.0, 1.0]], False),
-    ],
-)
-def test_is_columns(value, expected):
-    assert is_columns(value) is expected
 
 
 def test_close_is_safe_to_call_twice(tmp_path):

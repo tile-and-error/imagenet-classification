@@ -3,7 +3,7 @@ import json
 import pytest
 import torch
 
-from lwfm.results.curves import ConfusionMatrix, PRCurve, ROCCurve
+from lwfm.results.curves import ConfusionMatrix, Lines, PRCurve, ROCCurve
 from lwfm.results.events import RunEvent
 from lwfm.results.router import OutputRouter
 from lwfm.results.sinks import LocalFileSink
@@ -53,6 +53,8 @@ def test_confusion_matrix_predicts_the_highest_class_score():
         lambda: PRCurve([1.0], [0.0, 1.0], 0.5),
         lambda: ConfusionMatrix([[1, 0], [0, 1]], ["only one name"]),
         lambda: ConfusionMatrix([[1, 0], [0]], ["a", "b"]),
+        lambda: Lines({"x": [0.0, 1.0]}),  # nothing to plot against x
+        lambda: Lines({"x": [0.0, 1.0], "y": [1.0]}),
     ],
 )
 def test_malformed_values_fail_when_built(build):
