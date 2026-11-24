@@ -289,11 +289,14 @@ class EMAUpdate(Callback):
     @torch.no_grad()
     def on_after_optimizer_step(self, state: "TrainingState") -> None:
         student, teacher = self._modules(state)
+        # Parameters (learned weights): averaged, so the teacher changes smoothly
         for p_target, p_source in zip(
             teacher.parameters(), student.parameters(), strict=True
         ):
             # lerp_: t + (1 - m) * (s - t) = m * t + (1 - m) * s
             p_target.lerp_(p_source, 1.0 - self.momentum)
+        # Buffers (e.g. BatchNorm running stats): copied. The frozen teacher never
+        # updates its own, and integer ones (num_batches_tracked) can't be averaged
         for b_target, b_source in zip(
             teacher.buffers(), student.buffers(), strict=True
         ):
