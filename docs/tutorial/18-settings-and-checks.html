@@ -51,6 +51,7 @@ best_top1</code></pre>
   <tr><td><code>gradient_clip_norm</code></td><td>clip the total gradient norm</td></tr>
   <tr><td><code>val_every_n_steps</code>, <code>log_every_n_steps</code></td><td>how often to validate and log</td></tr>
   <tr><td><code>curves_every_n_validations</code></td><td>also build the curves at every n-th validation; by default only at the last</td></tr>
+  <tr><td><code>limit_train_batches</code>, <code>limit_val_batches</code></td><td>use only the first n batches of each epoch or validation, e.g. for a quick check</td></tr>
   <tr><td><code>step_fn</code></td><td>replace what one step computes; the rest of the loop stays</td></tr>
 </table>
 <p class="muted">With an <code>output_sink</code>, <code>fit</code> records these settings, plus the optimizer's hyperparameters, the scheduler, the callbacks and the torch seed, as one <code>trainer/settings</code> event at step 0, so every run says how it was trained.</p>

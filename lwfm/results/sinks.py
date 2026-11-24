@@ -63,6 +63,21 @@ def write_text_atomic(target_path: Path, text: str) -> None:
     os.replace(temp_path, target_path)  # readers never see a half-written file
 
 
+def summarise(value: object) -> str:
+    """A table on one line, with lists shown as their length, e.g.
+    `Lines(columns: {epoch: 100 values, top1: 100 values})`."""
+    if is_dataclass(value) and not isinstance(value, type):
+        parts = (
+            f"{f.name}: {summarise(getattr(value, f.name))}" for f in fields(value)
+        )
+        return f"{type(value).__name__}({', '.join(parts)})"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{k}: {summarise(v)}" for k, v in value.items()) + "}"
+    if isinstance(value, list | tuple):
+        return f"{len(value)} values"
+    return f"{value:.4g}" if isinstance(value, float) else str(value)
+
+
 def csv_row(cells: Iterable[object]) -> str:
     """One CSV line, quoted as needed (e.g. a traceback spanning several lines)."""
     buffer = io.StringIO()
@@ -206,6 +221,7 @@ class LocalFileSink(OutputSink):
 
 class ConsoleSink(OutputSink):
     """Prints one line per event, e.g. `[fit step 10] train/loss/total = 0.4321`.
+    A table is summarised (see `summarise`) unless its type defines its own str.
 
     Writes to a stream (stdout by default) rather than through `logging`: it is
     the console destination, so logging configuration shouldn't hide it.
@@ -223,9 +239,12 @@ class ConsoleSink(OutputSink):
             )
             if part
         )
-        shown_value = (
-            f"{event.value:.4g}" if isinstance(event.value, float) else event.value
-        )
+        if isinstance(event.value, float):
+            shown_value = f"{event.value:.4g}"
+        elif event.kind == "table" and type(event.value).__str__ is object.__str__:
+            shown_value = summarise(event.value)
+        else:
+            shown_value = event.value
         prefix = f"[{stage_and_step}] " if stage_and_step else ""
         self.output_stream.write(f"{prefix}{event.name} = {shown_value}\n")
         self.output_stream.flush()

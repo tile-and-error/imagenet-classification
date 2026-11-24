@@ -2,6 +2,7 @@ import random
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from functools import partial
+from itertools import islice
 
 import numpy as np  # a torchvision dependency, so always installed
 import torch
@@ -43,7 +44,8 @@ class Trainer:
     validation runs after every epoch. Either way, a run that stops part-way through
     an epoch validates once more, so it always ends with a validation result.
     Curves passed to `fit` are built at the last validation only, or also at every
-    `curves_every_n_validations`-th one.
+    `curves_every_n_validations`-th one. `limit_train_batches` and `limit_val_batches`
+    cap how many batches an epoch or a validation uses, e.g. for a quick check.
 
     With an output sink, `fit` first writes a `trainer/settings` message holding the
     loop settings, the torch seed and the optimizer, scheduler and callbacks, so
@@ -62,6 +64,8 @@ class Trainer:
         val_every_n_steps: int | None = None,
         curves_every_n_validations: int | None = None,
         log_every_n_steps: int = 50,
+        limit_train_batches: int | None = None,
+        limit_val_batches: int | None = None,
         step_fn: StepFn = default_step,
     ):
         if max_epochs is None and max_steps is None:
@@ -73,6 +77,8 @@ class Trainer:
             "curves_every_n_validations": curves_every_n_validations,
             "accumulate_grad_batches": accumulate_grad_batches,
             "log_every_n_steps": log_every_n_steps,
+            "limit_train_batches": limit_train_batches,
+            "limit_val_batches": limit_val_batches,
         }
         for setting_name, setting_value in counting_settings.items():
             if setting_value is not None and setting_value < 1:
@@ -93,6 +99,8 @@ class Trainer:
         self.validate_per_epoch = self.val_every_n_steps is None
         self.curves_every_n_validations = curves_every_n_validations
         self.log_every_n_steps = log_every_n_steps
+        self.limit_train_batches = limit_train_batches
+        self.limit_val_batches = limit_val_batches
         self.step_fn = step_fn
 
     def fit(
@@ -201,7 +209,8 @@ class Trainer:
         state.emit("on_epoch_start")
         state.graph.train()  # frozen nodes (teachers) stay in eval mode
         epoch_start_time, batch_count = time.perf_counter(), 0
-        for batch, is_last_batch in mark_last_batch(train_loader):
+        epoch_batches = islice(train_loader, self.limit_train_batches)  # None: all
+        for batch, is_last_batch in mark_last_batch(epoch_batches):
             batch_count += 1
             state.is_last_batch = is_last_batch
             state.accumulated += 1
@@ -279,7 +288,7 @@ class Trainer:
         # train mode
         return Evaluator().evaluate(
             state.graph,
-            val_loader,
+            islice(val_loader, self.limit_val_batches),  # None: all
             metrics,
             curve_bindings=curves,
             device=self.device,
@@ -339,6 +348,8 @@ class Trainer:
             "val_every_n_steps": self.val_every_n_steps,
             "curves_every_n_validations": self.curves_every_n_validations,
             "log_every_n_steps": self.log_every_n_steps,
+            "limit_train_batches": self.limit_train_batches,
+            "limit_val_batches": self.limit_val_batches,
             "step_fn": qualified_name(self.step_fn),
             # The seed torch's default generator started from: the one given to
             # seed_everything, or the random one torch picked if nothing seeded it

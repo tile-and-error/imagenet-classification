@@ -12,28 +12,20 @@ student, teacher or loss can be swapped for another without touching the rest:
 """
 
 import csv
-import io
 import json
 import math
 import random
-import shutil
-import statistics
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
+from functools import partial
 from itertools import islice
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.utils.data import DataLoader, Dataset
-from torch.utils.flop_counter import FlopCounterMode
-from torchmetrics.classification import (
-    MulticlassAccuracy,
-    MulticlassF1Score,
-    MulticlassRecall,
-)
+from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score
 from torchmetrics.regression import CosineSimilarity
 from torchvision.io import ImageReadMode, decode_image
 from torchvision.models import (
@@ -51,11 +43,20 @@ from torchvision.transforms import v2
 from lwfm.core.batch import to_device
 from lwfm.core.graph import ExecutionGraph, ModelNode
 from lwfm.core.losses import LossBinding, LossComposer
+from lwfm.core.types import Batch
+from lwfm.evaluation.benchmarks import inference_cost
 from lwfm.evaluation.evaluator import Evaluator
-from lwfm.evaluation.metrics import MetricBinding
+from lwfm.evaluation.metrics import CurveBinding, MetricBinding
+from lwfm.results.artifacts import save_artifact
+from lwfm.results.curves import ConfusionMatrix
 from lwfm.results.events import RunEvent
+from lwfm.results.plots import PlotSink
 from lwfm.results.router import OutputRouter
+from lwfm.results.runs import completed_runs, skip_if_completed
 from lwfm.results.sinks import ConsoleSink, LocalFileSink, OutputSink
+from lwfm.techniques.distillation import DIST, DKD, KD, EmbedCos, EmbedMSE  # noqa: F401
+from lwfm.training import Trainer, TrainingResult, seed_everything
+from lwfm.training.callbacks import LossWeightSchedule, RestoreBestWeights
 
 REPO = Path(__file__).resolve().parents[2]
 RUNS = REPO / "runs"
@@ -70,6 +71,7 @@ CPU = torch.device("cpu")
 
 
 def pick_device() -> torch.device:
+    """CUDA if there is a GPU, else Apple's MPS, else the CPU."""
     # A local, uncommitted override: a file `.kd-device` at the repository root
     # holding e.g. "cpu" (it is listed in .git/info/exclude, so it is never pushed)
     override = REPO / ".kd-device"
@@ -164,29 +166,18 @@ def make_split(
     seed: int = 5504132,
     exist_ok: bool = False,
 ) -> Path:
-    """Writes manifests in the format of examples/imagenet-splits.ipynb and returns
-    the folder: root/splits/<name>/{train,val,test,class_to_idx,split}.csv.
-
-    keep=None keeps every class with its own label. Otherwise the kept folders get
-    labels 0..k-1 and the "other" folders share label k:
-      num_other=None  every remaining folder is "other" (e.g. 10 + 190)
-      num_other=n     n remaining folders, drawn with `seed` from those with an
-                      ImageNet-1k match; the rest are left out (e.g. 10 + 40)
-
-    Why limit "other": a pretrained teacher's "other" logit merges the ImageNet
-    classes behind it, and fewer of them leave the teacher less biased towards
-    "other" (see ToStudentClasses). It also makes runs much faster. The cost is a
-    less varied "other" class and a milder imbalance.
-
-    val is a per-class hold-out from train/; test/ is used as given. An existing
-    split is never overwritten; exist_ok=True returns it instead. That is safe,
-    because the name fixes every setting, so the same name means the same split.
-    """
+    """Writes a split's manifests (train, val, test, class_to_idx, split .csv) and
+    returns its folder. The `keep` folders get labels 0..k-1 and every other folder
+    shares one "other" label (keep=None: every class keeps its own label)."""
     spec = DATASETS[dataset]
     root = spec.root
     folders = sorted(d.name for d in (root / "train").iterdir() if d.is_dir())
     keep = folders if keep is None else keep
     rest = [f for f in folders if f not in keep]
+    # num_other=n: only n other folders, drawn from those with an ImageNet-1k match
+    # (e.g. 10 + 40 instead of 10 + 190). The teacher's "other" logit merges the
+    # classes behind it, and fewer of them bias it less towards "other" (see
+    # ToStudentClasses); runs are faster too. The cost: a less varied "other" class
     if num_other is not None:
         matched = [f for f in rest if spec.imagenet_index(root, f) is not None]
         rest = sorted(random.Random(seed).sample(matched, num_other))
@@ -196,6 +187,8 @@ def make_split(
     tag = "all" if not rest else f"{len(keep)}+{len(rest)}other"
     pct = round(100 * train_fraction)
     out = root / "splits" / f"{dataset}-{tag}-{pct}-{100 - pct}_{seed}"
+    # The name fixes every setting, so an existing split of this name is the same
+    # split: reuse it (exist_ok), but never overwrite it
     if out.exists():
         if exist_ok:
             return out
@@ -213,6 +206,7 @@ def make_split(
             for f in files
         ]
 
+    # val is a per-class hold-out from train/; test/ is used as given
     rng = random.Random(seed)  # same split on every run and machine
     splits = {"train": [], "val": [], "test": []}
     for folder in folders:
@@ -287,6 +281,7 @@ class SplitData:
         self._rows: dict[str, list] = {}
 
     def rows(self, split: str) -> list[dict[str, str]]:
+        """A split's manifest rows: sample_id, path and label."""
         if split not in self._rows:  # read each manifest once
             self._rows[split] = read_csv(self.splits / f"{split}.csv")
         return self._rows[split]
@@ -300,6 +295,7 @@ class SplitData:
         seed: int = 0,
         device: torch.device = CPU,
     ) -> DataLoader:
+        """A shuffled loader over a split, augmented for train unless augment=False."""
         train = split == "train" and augment
         transform = self.spec.train_transform if train else self.spec.eval_transform
         return DataLoader(
@@ -407,30 +403,9 @@ class DinoV2WithEmbed(nn.Module):
 
 
 class ToStudentClasses(nn.Module):
-    """Teacher logits (1000 ImageNet classes) -> the student's classes.
-
-    Keeps the `keep` logits in label order. With `other`, the logits of the ImageNet
-    classes behind "other" are merged into one last logit:
-
-        z_other = logsumexp(z[other]) - shift
-
-    Logits of classes in neither list are dropped: only the split's own classes
-    compete in the softmax.
-
-    Why the shift: a softmax treats every class as equally likely in advance, so
-    merging n classes makes "other" n times likelier than a kept class before the
-    image is seen. When the teacher is unsure (e.g. 64 px images upsampled to
-    224 px), that prior wins, and its targets call most kept-class images "other".
-    Subtracting `shift` removes this bias (the standard label-shift / logit-
-    adjustment correction). shift = log n gives "other" the same prior as each kept
-    class. That maximises balanced accuracy, but it pulls "other" images towards
-    the kept classes. A smaller shift trades some balanced accuracy for precision,
-    so `tune_other_shift` picks it on val by macro-F1. Measured with ResNet-50 on
-    the Tiny 10 + 40 val split: macro-F1 0.58 without a shift, 0.69 at shift 2.3,
-    and 0.57 at log 40 = 3.7.
-
-    Without `other` (e.g. full ImageNet-1k, keep = 0..999), logits pass through.
-    """
+    """Maps a teacher's 1000 ImageNet logits to the student's classes: the `keep`
+    logits in label order, then one "other" logit merging the `other` classes,
+    logsumexp(z[other]) - shift. Logits of classes in neither list are dropped."""
 
     def __init__(
         self,
@@ -442,6 +417,13 @@ class ToStudentClasses(nn.Module):
         assert len(set(keep)) == len(keep), "two classes share a teacher class"
         assert not set(keep) & set(other or []), "a class is both kept and other"
         self.has_other = bool(other)
+        # Why the shift: merging n classes makes "other" n times likelier than a kept
+        # class before the image is seen. When the teacher is unsure (e.g. 64 px
+        # images upsampled to 224 px) that prior wins, and it calls most kept-class
+        # images "other". Subtracting log n removes the bias (the standard
+        # logit-adjustment correction) but pulls "other" images towards the kept
+        # classes, so tune_other_shift picks a shift between on val, by macro-F1.
+        # ResNet-50, Tiny 10 + 40 val: macro-F1 0.58 at 0, 0.69 at 2.3, 0.57 at 3.7.
         if self.has_other and shift is None:
             shift = math.log(len(other))  # the balanced prior
         self.shift = shift if self.has_other else 0.0
@@ -562,6 +544,7 @@ TEACHERS = {
 
 
 def student_node(name: str, data: SplitData) -> ModelNode:
+    """The student as a graph node: its normalisation, then the model."""
     spec = STUDENTS[name]
     model = spec.build(data.num_classes, data.spec.image_size)
     return ModelNode(
@@ -594,14 +577,9 @@ def teacher_node(
     other_shift: float | None = None,
     head: str | None = None,
 ) -> ModelNode:
-    """A frozen teacher reading the student's own augmented image, resized to its
-    input size: both see the same view, with no caching.
-
-    Its logits for the student's classes come from either:
-      head=None          its ImageNet logits, mapped by ToStudentClasses with the
-                         "other" correction (other_shift=None uses log n)
-      head="linear"/...  a head trained on its embedding (fit_teacher_head, E0c)
-    """
+    """The frozen teacher as a graph node, reading the student's own augmented image
+    (so both see the same view). Its class logits come from its mapped ImageNet
+    logits, or from a head trained on its embedding (head="linear" or "mlp", E0c)."""
     last = (
         TaskHead(load_teacher_head(head, name, data, pretrained))
         if head
@@ -627,13 +605,8 @@ def tune_other_shift(
     batch_size: int = 256,
     steps: int = 13,
 ) -> list[dict]:
-    """Scores the teacher on val for shifts from 0 to 1.5·log n (n = number of
-    "other" classes; log n is the balanced prior), from one pass of the teacher.
-
-    Returns rows of {shift, bal_acc, macro_f1, p_other_on_other}. Pick by val
-    macro-F1: it counts the precision lost when "other" images are pulled towards
-    the kept classes, which balanced accuracy barely sees.
-    """
+    """Scores the teacher on val at `steps` shifts from 0 to 1.5 log n (n = classes
+    behind "other"), from a single pass of the teacher. Returns one row per shift."""
     assert data.has_other, "only splits with an 'other' class have a shift to tune"
     model = teacher_model(teacher, pretrained).eval().to(device)
     logits, labels = [], []
@@ -707,17 +680,9 @@ def fit_teacher_head(
     steps: int = 2000,
     eval_every: int = 50,
 ) -> list[dict]:
-    """Trains a `kind` head ("linear" or "mlp") on the teacher's cached embeddings.
-
-    Class-weighted CE, full-batch AdamW (lr 1e-3), one run per weight decay. AdamW's
-    weight decay shrinks weights by lr·wd per step, so it needs values this large to
-    matter over 2000 steps. Each run keeps its
-    step with the best val macro-F1 (early stopping), and the best run is saved
-    for teacher_node(head=kind). Returns one row per weight decay, with
-    train/val confidence (mean top probability): a head much more confident on train
-    than on val has memorised it, and gives the student less to learn than labels
-    alone. A saved head is reused, so the rows come from its file.
-    """
+    """Trains a `kind` head ("linear" or "mlp") on the teacher's cached embeddings,
+    once per weight decay, and saves the best for teacher_node(head=kind). Returns
+    one row per weight decay. A head already saved is reused."""
     path = head_path(kind, teacher, data, pretrained)
     if path.exists():
         return torch.load(path, weights_only=False)["rows"]
@@ -735,30 +700,37 @@ def fit_teacher_head(
 
     (h_train, y_train), (h_val, y_val) = embed("train"), embed("val")
     k = data.num_classes
+    reads = ["head.logits", "targets.class"]
     ce = nn.CrossEntropyLoss(weight=data.class_weights())
-    macro_f1 = MulticlassF1Score(k, average="macro")
     bal_acc = MulticlassAccuracy(k, average="macro")
 
+    def full_batch(h: Tensor, y: Tensor) -> list[Batch]:
+        # The whole split as one batch: each epoch is one full-batch step
+        return [{"inputs": {"embed": h}, "targets": {"class": y}}]
+
+    # Full-batch AdamW at lr 1e-3. Its weight decay shrinks weights by lr * wd per
+    # step, so wd needs values this large to matter over 2000 steps
     rows, best = [], None
     for wd in weight_decays:
-        torch.manual_seed(0)
+        seed_everything(0)
         head = HEADS[kind](h_train.shape[1], k)
-        optimizer = torch.optim.AdamW(head.parameters(), lr=1e-3, weight_decay=wd)
-        best_f1, best_state, best_step = -1.0, None, 0
-        for step in range(1, steps + 1):
-            head.train()
-            loss = ce(head(h_train), y_train)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            if step % eval_every == 0:  # early stopping on val macro-F1
-                head.eval()
-                with torch.no_grad():
-                    f1 = macro_f1(head(h_val), y_val).item()
-                if f1 > best_f1:
-                    best_f1, best_step = f1, step
-                    best_state = {n: t.clone() for n, t in head.state_dict().items()}
-        head.load_state_dict(best_state)
+        node = ModelNode("head", head, inputs="inputs.embed", outputs="logits")
+        # Early stopping on val macro-F1: the head ends with its best step's weights
+        result = Trainer(
+            device=CPU, max_epochs=steps, val_every_n_steps=eval_every
+        ).fit(
+            ExecutionGraph([node]),
+            full_batch(h_train, y_train),
+            LossComposer([LossBinding("ce", ce, reads)]),
+            torch.optim.AdamW(head.parameters(), lr=1e-3, weight_decay=wd),
+            val_loader=full_batch(h_val, y_val),
+            metrics=[
+                MetricBinding("macro_f1", MulticlassF1Score(k, average="macro"), reads)
+            ],
+            callbacks=[RestoreBestWeights("head", "macro_f1")],
+        )
+        chosen_step = result.best("macro_f1")
+        best_f1, best_step = chosen_step["macro_f1"], int(chosen_step["step"])
         head.eval()
         with torch.no_grad():
             p_train, p_val = head(h_train).softmax(1), head(h_val).softmax(1)
@@ -795,6 +767,7 @@ def fit_teacher_head(
 def load_teacher_head(
     kind: str, teacher: str, data: SplitData, pretrained: bool = True
 ) -> nn.Module:
+    """A head saved by fit_teacher_head, in eval mode."""
     path = head_path(kind, teacher, data, pretrained)
     if not path.exists():
         raise FileNotFoundError(
@@ -818,110 +791,16 @@ def projector_node(student: str, teacher: str) -> ModelNode:
 
 
 # -------------------------------------------------------------------------- losses
-# Each loss says what it reads (`reads`), so a LossBinding needs no extra wiring.
+# KD, DKD, DIST, EmbedCos and EmbedMSE come from lwfm.techniques.distillation (and are
+# re-exported here for the notebooks); which values each one reads is our choice.
 
 
-class KD(nn.Module):
-    """Hinton KD: T^2 * KL(softmax(z_t/T) || softmax(z_s/T)).
-
-    weight: per-class weights w (e.g. data.class_weights()), as for weighted CE. Each
-    image's KL is then weighted by w of its true class: T^2 * sum_i w_yi KL_i / sum_i
-    w_yi. Unweighted KD is dominated by the majority class: with "other" at 80 % of
-    the images and of the teacher's probability mass, students first learn to always
-    predict "other". Weighting gives each class an equal share of the KD loss, as the
-    weighted CE does. It needs the labels, so it reads targets.class too.
-    """
-
-    reads = LOGITS
-
-    def __init__(self, T: float = 4.0, weight: Tensor | None = None):
-        super().__init__()
-        self.T = T
-        self.weighted = weight is not None  # recorded in the manifest
-        if self.weighted:
-            self.register_buffer("weight", weight)  # moves with composer.to(device)
-            self.reads = [*LOGITS, "targets.class"]
-
-    def forward(self, z_s: Tensor, z_t: Tensor, y: Tensor | None = None) -> Tensor:
-        T = self.T
-        log_p_s, p_t = F.log_softmax(z_s / T, 1), F.softmax(z_t / T, 1)
-        if not self.weighted:
-            return T**2 * F.kl_div(log_p_s, p_t, reduction="batchmean")
-        kl = F.kl_div(log_p_s, p_t, reduction="none").sum(1)  # one KL per image
-        w = self.weight[y]
-        return T**2 * (w * kl).sum() / w.sum()
-
-
-class DKD(nn.Module):
-    """Decoupled KD: T^2 * (alpha * target-class KD + beta * non-target-class KD)."""
-
-    reads = [*LOGITS, "targets.class"]
-
-    def __init__(self, alpha: float = 0.5, beta: float = 0.5, T: float = 1.0):
-        super().__init__()
-        self.alpha, self.beta, self.T = alpha, beta, T
-
-    def forward(self, z_s: Tensor, z_t: Tensor, y: Tensor) -> Tensor:
-        T = self.T
-        gt = F.one_hot(y, z_s.shape[1]).bool()
-        p_s, p_t = F.softmax(z_s / T, 1), F.softmax(z_t / T, 1)
-        # Target vs everything else, as two-way distributions
-        b_s = torch.stack([p_s[gt], 1 - p_s[gt]], 1).clamp_min(1e-12)
-        b_t = torch.stack([p_t[gt], 1 - p_t[gt]], 1)
-        tckd = F.kl_div(b_s.log(), b_t, reduction="batchmean")
-        # Non-target classes only: -1e4 removes the target from both softmaxes
-        nckd = F.kl_div(
-            F.log_softmax(z_s / T - 1e4 * gt, 1),
-            F.softmax(z_t / T - 1e4 * gt, 1),
-            reduction="batchmean",
-        )
-        return T**2 * (self.alpha * tckd + self.beta * nckd)
-
-
-def pearson(a: Tensor, b: Tensor, dim: int, eps: float = 1e-8) -> Tensor:
-    a, b = a - a.mean(dim, keepdim=True), b - b.mean(dim, keepdim=True)
-    return (a * b).sum(dim) / (a.norm(dim=dim) * b.norm(dim=dim) + eps)
-
-
-class DIST(nn.Module):
-    """Matches correlations, not exact probabilities: across classes per sample
-    (inter) and across the batch per class (intra)."""
-
-    reads = LOGITS
-
-    def __init__(self, beta: float = 1.0, gamma: float = 1.0, T: float = 1.0):
-        super().__init__()
-        self.beta, self.gamma, self.T = beta, gamma, T
-
-    def forward(self, z_s: Tensor, z_t: Tensor) -> Tensor:
-        p_s, p_t = F.softmax(z_s / self.T, 1), F.softmax(z_t / self.T, 1)
-        inter = 1 - pearson(p_s, p_t, dim=1).mean()
-        intra = 1 - pearson(p_s, p_t, dim=0).mean()
-        return self.T**2 * (self.beta * inter + self.gamma * intra)
-
-
-class EmbedCos(nn.Module):
-    """1 - cos(P(h_s), h_t): matches the direction of the embeddings."""
-
-    reads = EMBED
-
-    def forward(self, h_s: Tensor, h_t: Tensor) -> Tensor:
-        return 1 - F.cosine_similarity(h_s, h_t, dim=1).mean()
-
-
-class EmbedMSE(nn.Module):
-    """MSE to the teacher embedding standardised per dimension (mean, std over the
-    train set; see teacher_embed_stats)."""
-
-    reads = EMBED
-
-    def __init__(self, mean: Tensor, std: Tensor):
-        super().__init__()
-        self.register_buffer("mean", mean)
-        self.register_buffer("std", std)
-
-    def forward(self, h_s: Tensor, h_t: Tensor) -> Tensor:
-        return F.mse_loss(h_s, (h_t - self.mean) / self.std)
+def loss_reads(loss: nn.Module) -> list[str]:
+    """The values a distillation loss reads, in its forward's argument order."""
+    if isinstance(loss, EmbedCos | EmbedMSE):
+        return EMBED
+    needs_labels = isinstance(loss, DKD) or (isinstance(loss, KD) and loss.weighted)
+    return [*LOGITS, "targets.class"] if needs_labels else LOGITS
 
 
 def cache_dir(pretrained: bool) -> Path:
@@ -1009,53 +888,22 @@ def embed_cos_metric() -> MetricBinding:
     return MetricBinding("embed_cos", CosineSimilarity(reduction="mean"), EMBED)
 
 
-@torch.inference_mode()
-def per_class_recall(
-    graph: ExecutionGraph, loader, node: str, num_classes: int, device: torch.device
-) -> list[float]:
-    recall = MulticlassRecall(num_classes, average="none").to(device)
-    graph.eval()
-    for batch in loader:
-        batch = to_device(batch, device)
-        recall.update(graph(batch)[f"{node}.logits"], batch["targets"]["class"])
-    return recall.compute().tolist()
-
-
-def inference_cost(
-    model: nn.Module,
-    device: torch.device,
-    image_size: int,
-    warmup: int = 10,
-    repeats: int = 50,
-) -> dict[str, float]:
-    """Cost of a deployable model on one image: parameters, saved size, FLOPs and
-    latency."""
-    model = model.eval().to(device)
-    x = torch.rand(1, 3, image_size, image_size, device=device)
-    buffer = io.BytesIO()
-    torch.save(model.state_dict(), buffer)
-    sync = {"cuda": torch.cuda.synchronize, "mps": torch.mps.synchronize}.get(
-        device.type, lambda: None
+def confusion_curve(node: str, data: SplitData) -> CurveBinding:
+    """The confusion matrix of `node`'s predictions, with the class names: logged as
+    the table eval/<split>/confusion and drawn by PlotSink. Per-class recall is each
+    row's diagonal over the row's sum."""
+    names = data.class_names()
+    return CurveBinding(
+        "confusion",
+        lambda scores, labels: ConfusionMatrix.from_scores(scores, labels, names),
+        [f"{node}.logits", "targets.class"],
     )
-    times = []
-    with torch.inference_mode():
-        with FlopCounterMode(display=False) as flops:
-            model(x)
-        for i in range(warmup + repeats):
-            sync()
-            start = time.perf_counter()
-            model(x)
-            sync()  # GPU work is asynchronous; wait before stopping the clock
-            if i >= warmup:
-                times.append(time.perf_counter() - start)
-    times.sort()
-    return {
-        "params_m": sum(p.numel() for p in model.parameters()) / 1e6,
-        "size_mb": buffer.getbuffer().nbytes / 1e6,
-        "gflops": flops.get_total_flops() / 1e9,  # 2 FLOPs per multiply-add
-        "latency_ms_median": 1e3 * statistics.median(times),
-        "latency_ms_p95": 1e3 * times[int(0.95 * (len(times) - 1))],
-    }
+
+
+def one_image(data: SplitData, device: torch.device) -> Tensor:
+    """A random image at the dataset's size, for measuring a model's cost."""
+    size = data.spec.image_size
+    return torch.rand(1, 3, size, size, device=device)
 
 
 # ------------------------------------------------------------- setups and training
@@ -1063,6 +911,8 @@ def inference_cost(
 
 @dataclass(frozen=True)
 class TrainConfig:
+    """One run's training settings. The budgets below (MAIN, FAST, LONG) are these."""
+
     epochs: int = 100
     batch_size: int = 256
     eval_batch_size: int = 512
@@ -1112,28 +962,18 @@ LOCAL = {
 
 @dataclass(frozen=True)
 class Setup:
-    """What one run trains: a student, optionally a teacher, and its losses.
-
-    logit, embed: zero-argument factories for a loss module, e.g. partial(KD, T=4).
-    alpha: None weights every loss 1; a number gives (1 - alpha)·CE + alpha·logit.
-    ce=False with an embed loss is the label-free setting: a linear probe on the
-    frozen student embedding is trained afterwards.
-    other_shift: the prior correction for the teacher's "other" logit (see
-    ToStudentClasses); None uses log(number of "other" classes).
-    teacher_head: "linear" or "mlp" to use a head trained in E0c instead of the
-    teacher's ImageNet logits (other_shift is then unused).
-    weighted_kd: weight the KD loss by class, with the same weights as the CE (see KD).
-    """
+    """What one run trains: a student, optionally a teacher, and its losses."""
 
     student: str = "resnet18"
     teacher: str = "resnet50"
+    # Loss factories, e.g. partial(KD, T=4): a logit loss and/or an embedding loss
     logit: Callable[[], nn.Module] | None = None
     embed: Callable[[], nn.Module] | None = None
-    alpha: float | None = None
-    ce: bool = True
-    other_shift: float | None = None
-    teacher_head: str | None = None
-    weighted_kd: bool = False
+    alpha: float | None = None  # (1 - alpha) * CE + alpha * logit loss; None: all 1
+    ce: bool = True  # False (with an embed loss): label-free, scored by a probe
+    other_shift: float | None = None  # see ToStudentClasses; None: log n
+    teacher_head: str | None = None  # "linear"/"mlp": an E0c head, not the logits
+    weighted_kd: bool = False  # weight KD by class, as the CE is
 
     @property
     def needs_teacher(self) -> bool:
@@ -1144,6 +984,7 @@ class Setup:
         return not self.ce
 
     def build(self, data: SplitData, pretrained: bool = True):
+        """The graph nodes and loss bindings this setup trains with."""
         nodes = [student_node(self.student, data)]
         losses = []
         if self.ce:
@@ -1161,21 +1002,24 @@ class Setup:
             extra = {"weight": data.class_weights()} if self.weighted_kd else {}
             loss = self.logit(**extra)
             w = 1.0 if self.alpha is None else self.alpha
-            losses.append(LossBinding(type(loss).__name__, loss, loss.reads, weight=w))
+            name = type(loss).__name__
+            losses.append(LossBinding(name, loss, loss_reads(loss), weight=w))
         if self.embed:
             nodes.append(projector_node(self.student, self.teacher))
             loss = self.embed()
-            losses.append(LossBinding(type(loss).__name__, loss, loss.reads))
+            losses.append(LossBinding(type(loss).__name__, loss, loss_reads(loss)))
         return nodes, losses
 
     def train_config(
         self, budget: TrainConfig, data: SplitData, overrides: dict | None = None
     ) -> TrainConfig:
+        """The budget with the dataset's, the student's, then any overrides applied."""
         settings = data.spec.train | STUDENTS[self.student].train | (overrides or {})
         return replace(budget, **settings)
 
 
 def make_optimizer(cfg: TrainConfig, params) -> torch.optim.Optimizer:
+    """AdamW, or SGD with Nesterov momentum, as the config says."""
     if cfg.optimizer == "adamw":
         return torch.optim.AdamW(params, lr=cfg.lr, weight_decay=cfg.weight_decay)
     return torch.optim.SGD(
@@ -1188,7 +1032,7 @@ def make_optimizer(cfg: TrainConfig, params) -> torch.optim.Optimizer:
 
 
 def make_scheduler(cfg: TrainConfig, optimizer, steps_per_epoch: int):
-    """Both schedules step once per batch."""
+    """One-cycle, or linear warmup then cosine decay. Both step once per batch."""
     total = cfg.epochs * steps_per_epoch
     if cfg.schedule == "one_cycle":
         return torch.optim.lr_scheduler.OneCycleLR(optimizer, 2 * cfg.lr, total)
@@ -1205,6 +1049,12 @@ def make_scheduler(cfg: TrainConfig, optimizer, steps_per_epoch: int):
     )
 
 
+def epoch_ramp(target: float, ramp_epochs: int, steps_per_epoch: int):
+    """A loss weight rising linearly from 0 to `target` over `ramp_epochs`, held for
+    each epoch, as a function of the optimizer step (for LossWeightSchedule)."""
+    return lambda step: target * min(1.0, step // steps_per_epoch / ramp_epochs)
+
+
 def fit(
     graph: ExecutionGraph,
     composer: LossComposer,
@@ -1214,70 +1064,46 @@ def fit(
     seed: int,
     device: torch.device,
     sink: OutputSink,
-    val_graph: ExecutionGraph,
     metrics: list[MetricBinding],
-    kd_metrics: list[MetricBinding] = (),
-    stage: str = "fit",
-) -> None:
-    """A plain torch training loop over an lwfm graph and loss composer.
-
-    val_graph holds only the nodes the metrics need (no teacher), so per-epoch
-    validation is cheap. kd_metrics need the full graph, so they run every 10 epochs.
-    """
+    curves: list[CurveBinding] = (),
+) -> TrainingResult:
+    """Trains with lwfm's Trainer: one optimizer step per batch, the LR schedule
+    stepped every step, DKD's weight ramped in over cfg.ramp_epochs, and validation
+    after every epoch (curves at the last one only)."""
     train = data.loader("train", cfg.batch_size, seed=seed, device=device)
     val = data.loader("val", cfg.eval_batch_size, device=device)
     steps_per_epoch = min(len(train), cfg.max_steps or len(train))
-    params = [p for p in graph.parameters() if p.requires_grad]  # teacher excluded
-    optimizer = make_optimizer(cfg, params)
-    scheduler = make_scheduler(cfg, optimizer, steps_per_epoch)
-    # DKD ramps from 0 to its full weight; LossComposer reads binding.weight each call
-    ramps = [(b, b.weight) for b in composer.loss_bindings if isinstance(b.loss, DKD)]
-    graph.to(device)
-    composer.to(device)  # moves loss buffers: CE class weights, EmbedMSE statistics
-
-    def scalar(name, value, step):
-        sink.write(RunEvent("scalar", name, value, stage=stage, step=step))
-
-    step = 0
-    for epoch in range(cfg.epochs):
-        for binding, target in ramps:
-            binding.weight = target * min(1.0, epoch / cfg.ramp_epochs)
-        graph.train()  # frozen nodes stay in eval mode
-        start = time.perf_counter()
-        for batch in islice(train, steps_per_epoch):
-            batch = to_device(batch, device)
-            total, terms = composer(batch, graph(batch))  # one forward runs every node
-            optimizer.zero_grad(set_to_none=True)
-            total.backward()
-            if cfg.grad_clip:
-                nn.utils.clip_grad_norm_(params, cfg.grad_clip)
-            optimizer.step()
-            scheduler.step()
-            step += 1
-            if step % 50 == 0 or cfg.max_steps:
-                for name, value in (terms | {"total": total.detach()}).items():
-                    scalar(f"train/loss/{name}", value, step)
-        scalar("train/epoch_seconds", time.perf_counter() - start, step)
-        scalar("train/lr", scheduler.get_last_lr()[0], step)
-
-        if metrics:
-            Evaluator().evaluate(
-                val_graph,
-                islice(val, cfg.eval_batches),
-                metrics,
-                device=device,
-                output_sink=sink,
-                training_step=step,
-            )
-        if kd_metrics and (epoch % 10 == 9 or epoch == cfg.epochs - 1):
-            Evaluator().evaluate(
-                graph,
-                islice(val, cfg.eval_batches),
-                kd_metrics,
-                device=device,
-                output_sink=sink,
-                training_step=step,
-            )
+    # Only trainable parameters: the frozen teacher's are left out
+    optimizer = make_optimizer(cfg, [p for p in graph.parameters() if p.requires_grad])
+    # DKD starts at weight 0 and reaches its full weight after cfg.ramp_epochs
+    ramps = [
+        LossWeightSchedule(
+            b.name, epoch_ramp(b.weight, cfg.ramp_epochs, steps_per_epoch)
+        )
+        for b in composer.loss_bindings
+        if isinstance(b.loss, DKD)
+    ]
+    trainer = Trainer(
+        device=device,
+        max_epochs=cfg.epochs,
+        gradient_clip_norm=cfg.grad_clip or None,
+        log_every_n_steps=1 if cfg.max_steps else 50,
+        limit_train_batches=cfg.max_steps,
+        limit_val_batches=cfg.eval_batches,
+    )
+    return trainer.fit(
+        graph,
+        train,
+        composer,
+        optimizer,
+        val_loader=val if metrics else None,
+        metrics=metrics,
+        curves=list(curves),
+        scheduler=make_scheduler(cfg, optimizer, steps_per_epoch),
+        scheduler_interval="step",
+        callbacks=ramps,
+        output_sink=sink,
+    )
 
 
 def teacher_variant(node: ModelNode) -> dict:
@@ -1288,30 +1114,6 @@ def teacher_variant(node: ModelNode) -> dict:
         head = last.head
         return {"teacher_head": "linear" if isinstance(head, nn.Linear) else "mlp"}
     return {"teacher_head": None, "other_shift": last.shift}
-
-
-def completed(run_dir: Path) -> bool:
-    """Whether to skip a run: True if it already completed.
-
-    An interrupted or failed run can't be resumed partway, so its folder is deleted
-    and the run starts again. A folder still marked "running" raises an error: it
-    may belong to a run that is still going (e.g. in another notebook). If it
-    isn't, delete the folder by hand.
-    """
-    status_file = run_dir / "status.json"
-    if not status_file.exists():
-        return False
-    status = json.loads(status_file.read_text())["status"]
-    if status == "completed":
-        print(f"skip {run_dir}: already completed")
-        return True
-    if status in ("interrupted", "failed"):
-        print(f"restart {run_dir}: the last attempt was {status}")
-        shutil.rmtree(run_dir)
-        return False
-    raise FileExistsError(
-        f"{run_dir} is marked {status}; if no run is using it, delete it"
-    )
 
 
 def run(
@@ -1326,15 +1128,12 @@ def run(
     overrides: dict | None = None,
     runs: Path = RUNS,
 ) -> Path:
-    """One reproducible run, recorded in runs/<name>/.
-
-    Trains, evaluates on test once, saves the deployable student (no teacher, no
-    projector) and its cost. A completed run is skipped, so re-running an
-    experiment resumes it.
-    """
+    """One recorded run in runs/<name>/: trains, tests once, and saves the student
+    and its cost. A completed run is skipped, so rerunning an experiment resumes it."""
     device = device or pick_device()
     run_dir = runs / name
-    if completed(run_dir):
+    if skip_if_completed(run_dir):
+        print(f"skip {run_dir}: already completed")
         return run_dir
 
     cfg = setup.train_config(budget, data, overrides)
@@ -1343,12 +1142,13 @@ def run(
     )
     print(f"\n>>> train {name}: {model}, {cfg.epochs} epochs, seed {seed}")
     start = time.perf_counter()
-    torch.manual_seed(seed)  # fixes the student's initial weights
+    # Build the graph and losses, and check the shapes before training
+    seed_everything(seed)  # fixes the student's initial weights
     nodes, losses = setup.build(data, pretrained)
     graph = ExecutionGraph(nodes).to(device)
     shapes = graph.preflight(to_device(next(iter(data.loader("val", 8))), device))
     composer = LossComposer(losses)
-    manifest = {
+    manifest = {  # what the run trained, recorded in manifest.json
         "name": name,
         "seed": seed,
         "student": setup.student,
@@ -1363,10 +1163,13 @@ def run(
     }
 
     predict = "student"
-    val_graph = ExecutionGraph([n for n in nodes if n.name not in KD_ONLY_NODES])
-    kd_metrics = [embed_cos_metric()] if "projector" in graph.nodes else []
-    with OutputRouter(LocalFileSink(run_dir, manifest), ConsoleSink()) as sink:
-        metrics = class_metrics(predict, data.num_classes) if setup.ce else []
+    # The deployable part, for the final test: no teacher, no projector
+    test_graph = ExecutionGraph([n for n in nodes if n.name not in KD_ONLY_NODES])
+    metrics = class_metrics(predict, data.num_classes) if setup.ce else []
+    if "projector" in graph.nodes:
+        metrics.append(embed_cos_metric())
+    sinks = LocalFileSink(run_dir, manifest), ConsoleSink(), PlotSink(run_dir / "plots")
+    with OutputRouter(*sinks) as sink:
         fit(
             graph,
             composer,
@@ -1375,63 +1178,86 @@ def run(
             seed=seed,
             device=device,
             sink=sink,
-            val_graph=val_graph,
             metrics=metrics,
-            kd_metrics=kd_metrics,
+            curves=[confusion_curve(predict, data)] if setup.ce else [],
         )
         student = graph.deployable_model("student")
 
         if setup.needs_probe:  # label-free: score the embedding with a linear probe
             predict = "probe"
-            frozen = ModelNode("student", student, "inputs.image", "embed", frozen=True)
-            probe = nn.Linear(STUDENTS[setup.student].dim, data.num_classes)
-            graph = val_graph = ExecutionGraph(
-                [frozen, ModelNode("probe", probe, "student.embed", "logits")]
+            test_graph, probe = train_probe(
+                student, setup, data, cfg, seed, device, sink
             )
-            ce = nn.CrossEntropyLoss(weight=data.class_weights())
-            probe_cfg = replace(
-                cfg,
-                epochs=cfg.probe_epochs,
-                optimizer="sgd",
-                lr=0.1,
-                schedule="cosine",
-                warmup_epochs=0,
-                grad_clip=None,
-            )
-            fit(
-                graph,
-                LossComposer([LossBinding("ce", ce, ["probe.logits", CE[1]])]),
-                data,
-                probe_cfg,
-                seed=seed,
-                device=device,
-                sink=sink,
-                val_graph=val_graph,
-                metrics=class_metrics("probe", data.num_classes),
-                stage="probe",
-            )
-            torch.save(probe.state_dict(), run_dir / "probe.pt")
+            save_weights(run_dir, "probe.pt", probe, sink)
 
         # Final test: once, after every choice was made on val
         test = data.loader("test", cfg.eval_batch_size, device=device)
         Evaluator().evaluate(
-            val_graph,
+            test_graph,
             islice(test, cfg.eval_batches),
             class_metrics(predict, data.num_classes),
+            curve_bindings=[confusion_curve(predict, data)],
             device=device,
             split_name="test",
             output_sink=sink,
         )
-        torch.save(student.state_dict(), run_dir / "student.pt")
-        sink.write(RunEvent("artifact", "student_weights", run_dir / "student.pt"))
-        for key, value in inference_cost(student, device, data.spec.image_size).items():
+        save_weights(run_dir, "student.pt", student, sink)
+        for key, value in inference_cost(student, one_image(data, device)).items():
             sink.write(RunEvent("scalar", f"cost/{key}", value))
     print_done(name, run_dir, start)
     return run_dir
 
 
+def train_probe(
+    student: nn.Module,
+    setup: Setup,
+    data: SplitData,
+    cfg: TrainConfig,
+    seed: int,
+    device: torch.device,
+    sink: OutputSink,
+) -> tuple[ExecutionGraph, nn.Module]:
+    """For a label-free run: trains a linear probe on the frozen student's embedding
+    with weighted CE. Returns the graph to test (student, then probe) and the probe."""
+    frozen = ModelNode("student", student, "inputs.image", "embed", frozen=True)
+    probe = nn.Linear(STUDENTS[setup.student].dim, data.num_classes)
+    graph = ExecutionGraph(
+        [frozen, ModelNode("probe", probe, "student.embed", "logits")]
+    )
+    ce = nn.CrossEntropyLoss(weight=data.class_weights())
+    probe_cfg = replace(  # a plain schedule, whatever the student trained with
+        cfg,
+        epochs=cfg.probe_epochs,
+        optimizer="sgd",
+        lr=0.1,
+        schedule="cosine",
+        warmup_epochs=0,
+        grad_clip=None,
+    )
+    fit(
+        graph,
+        LossComposer([LossBinding("ce", ce, ["probe.logits", CE[1]])]),
+        data,
+        probe_cfg,
+        seed=seed,
+        device=device,
+        sink=sink,
+        metrics=class_metrics("probe", data.num_classes),
+        curves=[confusion_curve("probe", data)],
+    )
+    return graph, probe
+
+
+def save_weights(run_dir: Path, file: str, model: nn.Module, sink: OutputSink) -> None:
+    """Saves `model`'s weights as run_dir/<file> and records it as an artifact
+    (e.g. student_weights)."""
+    name = f"{Path(file).stem}_weights"
+    write = partial(torch.save, model.state_dict())
+    save_artifact(run_dir, file, write, sink, name=name)
+
+
 def print_done(name: str, run_dir: Path, start: float) -> None:
-    # One line per finished run: its headline numbers and how long it took
+    """Prints a finished run's headline numbers and how long it took."""
     summary = json.loads((run_dir / "summary.json").read_text())
     keys = ("eval/val/bal_acc", "eval/test/bal_acc", "eval/test/macro_f1")
     scores = ", ".join(
@@ -1453,12 +1279,13 @@ def evaluate_teacher(
     overrides: dict | None = None,
     runs: Path = RUNS,
 ) -> Path:
-    """Scores a teacher alone on val and test (no training), with per-class test
-    recall and the teacher's cost at the student's input size (so including any
-    upsampling)."""
+    """Scores a teacher alone on val and test (no training), with each split's
+    confusion matrix (eval/<split>/confusion) and the teacher's cost at the
+    student's input size (so including any upsampling)."""
     device = device or pick_device()
     run_dir = runs / name
-    if completed(run_dir):
+    if skip_if_completed(run_dir):
+        print(f"skip {run_dir}: already completed")
         return run_dir
     cfg = replace(MAIN, **(overrides or {}))  # only the eval batch settings are used
     print(f"\n>>> evaluate {name}: teacher {teacher} alone, no training")
@@ -1475,33 +1302,20 @@ def evaluate_teacher(
     }
     metrics = class_metrics("teacher", data.num_classes)
 
-    def batches(split):
-        loader = data.loader(split, cfg.eval_batch_size, device=device)
-        return islice(loader, cfg.eval_batches)
-
-    with OutputRouter(LocalFileSink(run_dir, manifest), ConsoleSink()) as sink:
+    sinks = LocalFileSink(run_dir, manifest), ConsoleSink(), PlotSink(run_dir / "plots")
+    with OutputRouter(*sinks) as sink:
         for split in ("val", "test"):
+            loader = data.loader(split, cfg.eval_batch_size, device=device)
             Evaluator().evaluate(
                 graph,
-                batches(split),
+                islice(loader, cfg.eval_batches),
                 metrics,
+                curve_bindings=[confusion_curve("teacher", data)],
                 device=device,
                 split_name=split,
                 output_sink=sink,
             )
-        recall = per_class_recall(
-            graph, batches("test"), "teacher", data.num_classes, device
-        )
-        sink.write(
-            RunEvent(
-                "table",
-                "test/per_class_recall",
-                dict(zip(data.classes, recall, strict=True)),
-            )
-        )
-        for key, value in inference_cost(
-            node.module, device, data.spec.image_size
-        ).items():
+        for key, value in inference_cost(node.module, one_image(data, device)).items():
             sink.write(RunEvent("scalar", f"cost/{key}", value))
     print_done(name, run_dir, start)
     return run_dir
@@ -1511,18 +1325,8 @@ def evaluate_teacher(
 
 
 def results(pattern: str = "**", runs: Path = RUNS) -> list[dict]:
-    """manifest.json | summary.json of every completed run matching runs/<pattern>."""
-    rows = []
-    for status in sorted(runs.glob(f"{pattern}/status.json")):
-        d = status.parent
-        if json.loads(status.read_text())["status"] != "completed":
-            continue
-        rows.append(
-            json.loads((d / "manifest.json").read_text())
-            | json.loads((d / "summary.json").read_text())
-            | {"run": d.relative_to(runs).as_posix()}
-        )
-    return rows
+    """manifest | summary of every completed run matching runs/<pattern>."""
+    return completed_runs(runs, pattern)
 
 
 def best(
@@ -1547,12 +1351,15 @@ class Experiment:
     run_kwargs: dict = field(default_factory=dict)
 
     def sweep(self, data: SplitData, fast: TrainConfig = FAST) -> None:
+        """One run of every setup on the fast budget, to rank them."""
         for key, setup in self.setups.items():
             run(f"{self.name}/sweep/{key}_s0", setup, data, fast, **self.run_kwargs)
 
     def confirm(
         self, data: SplitData, main: TrainConfig = MAIN, long: TrainConfig = LONG
     ) -> list[str]:
+        """Runs the best `top_k` sweep setups on the main budget (every seed) and,
+        with long_check, once on the long one. Returns their names, best first."""
         keys = best(f"{self.name}/sweep/*", self.top_k, runs=self.runs)
         for key in keys:
             for seed in self.seeds:
@@ -1575,5 +1382,5 @@ class Experiment:
         return keys
 
     @property
-    def runs(self) -> Path:
+    def runs(self) -> Path:  # the runs folder this experiment writes to
         return self.run_kwargs.get("runs", RUNS)

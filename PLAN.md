@@ -317,6 +317,7 @@ sequenceDiagram
 | `lwfm/evaluation/metrics.py`   | `MetricBinding(name, metric, inputs)`; `binding.update(batch, node_outputs)`                                                   | `metric` is a torchmetrics `Metric`.                                                                                                                                                                                          |
 |                                | `CurveBinding(name, build, inputs)`                                                                                            | Keeps every batch's values (on the CPU), then `build(*values)` once per split, e.g. `ROCCurve.from_scores`. Memory grows with the split.                                                                          |
 | `lwfm/evaluation/evaluator.py` | `Evaluator().evaluate(graph, data_loader, metric_bindings, *, curve_bindings=(), device, split_name="val", output_sink=None, training_step=None)` | Returns `EvaluationResult(metric_values={name: float}, curves={name: Curve})`; each curve is written as the table `eval/<split>/<name>`. `Trainer.fit(curves=...)` passes them through at the last validation, and every `Trainer(curves_every_n_validations=n)`-th; see §3.6. |
+| `lwfm/evaluation/benchmarks.py` | `inference_cost(model, example, *, warmup=10, repeats=50)`                                                                    | Parameters (M), saved size (MB), FLOPs (G) and median / p95 latency (ms) of `model` on `example`, in eval mode on the example's device. |
 | `lwfm/core/batch.py`           | `to_device(batch, device)`                                                                                                     | Moves tensors; keeps ids and paths.                                                                                                                                                                                           |
 
 **Design choices and their reasons**
@@ -674,10 +675,12 @@ classDiagram
 | `lwfm/results/events.py`   | `RunEvent(kind, name, value, stage=None, step=None)`                        | `kind` ∈ `scalar, table, artifact, status, message`; `timestamp_utc` is set automatically. A one-element tensor scalar is stored as a number; any other tensor raises `TypeError`. |
 | `lwfm/results/sinks.py`    | `OutputSink` (ABC): `write(event)`, `close()`                               | A destination; what `Trainer` and `Evaluator` accept (§3.6).                                                                                                                       |
 |                            | `LocalFileSink(run_dir, manifest_fields=None, file_format="json")`          | See below. Refuses a directory that already holds a run.                                                                                                                           |
-|                            | `ConsoleSink(output_stream=sys.stdout)`                                     | One line per event: `[fit step 10] train/loss/total = 0.4321`.                                                                                                                     |
+|                            | `ConsoleSink(output_stream=sys.stdout)`                                     | One line per event: `[fit step 10] train/loss/total = 0.4321`; a table without its own `str` as a summary.                                                                                                                     |
 |                            | `SinkError` (`RuntimeError`)                                                | A sink failed; names the sink and the event.                                                                                                                                       |
 | `lwfm/results/plots.py`    | `PlotSink(plot_dir)`                                                        | On close, one PNG per scalar name (a `Lines` of value against step); as each `table` holding a `Curve` arrives, one PNG per name and step, drawn by the curve's `draw(axes)`. Example: `examples/roc_plot_sink.ipynb`. |
 | `lwfm/results/curves.py`   | `Curve` (Protocol: `draw(axes)`); `ROCCurve.from_scores(scores, labels)`, `PRCurve.from_scores(...)`, `ConfusionMatrix.from_scores(scores, labels, class_names=None)`; `Lines(columns)` | Plots as frozen dataclasses that draw themselves; the evaluation curves are built with torchmetrics (curve points plus AUC / average precision). Sent as `table` event values; a `CurveBinding` must build a `Curve`. |
+| `lwfm/results/runs.py`     | `completed_runs(root, pattern="**")`; `skip_if_completed(run_dir)`; `run_status(run_dir)` | Read back JSON run folders: manifest, summary and relative path of every completed run; skip a completed run, delete an interrupted or failed one, refuse one still running. |
+| `lwfm/techniques/distillation.py` | `KD(T, weight=None)`, `DKD(alpha, beta, T)`, `DIST(beta, gamma, T)`, `EmbedCos()`, `EmbedMSE(mean, std)` | Distillation losses as plain modules on logits or embeddings (plus labels for DKD and weighted KD); bound to names with a `LossBinding`. |
 | `lwfm/results/artifacts.py` | `save_artifact(run_dir, relative_path, write, output_sink, *, name, step=None)` | Writes a file into the run directory atomically with `write(path)`, then emits an `artifact` event with the relative path. Used by `ModelCheckpoint`, and for any custom file, e.g. `figure.savefig`. |
 | `lwfm/results/router.py`   | `OutputRouter(*output_sinks)`: `write(event)`, `close()`; a context manager | An `OutputSink` that sends every event to every sink in order.                                                                                                                     |
 | `lwfm/results/manifest.py` | `environment()`                                                             | Python/torch/torchvision versions, platform, CUDA device.                                                                                                                          |
@@ -748,8 +751,10 @@ repository/
 │   │   ├── events.py
 │   │   ├── plots.py
 │   │   ├── router.py
+│   │   ├── runs.py            # completed_runs, skip_if_completed
 │   │   └── sinks.py
-│   ├── techniques/            # from Phase 2
+│   ├── techniques/
+│   │   └── distillation.py    # KD, DKD, DIST, EmbedCos, EmbedMSE
 │   ├── integrations/          # TIAToolbox, TRIDENT, Slurm, later
 │   └── analysis/              # later
 ├── scripts/

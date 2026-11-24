@@ -7,6 +7,7 @@ import pytest
 import torch
 import yaml
 
+from lwfm.results.curves import Lines, ROCCurve
 from lwfm.results.events import RunEvent
 from lwfm.results.sinks import ConsoleSink, LocalFileSink, OutputSink
 
@@ -240,6 +241,37 @@ def test_console_line_format(event, line):
     stream = io.StringIO()
     ConsoleSink(stream).write(event)
     assert stream.getvalue() == line + "\n"
+
+
+@dataclass(frozen=True)
+class TextTable:
+    rows: list
+
+    def __str__(self):
+        return "a | b"
+
+
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [
+        (
+            ROCCurve([0.0, 0.5, 1.0], [0.0, 0.9, 1.0], 0.87654),
+            "ROCCurve(fpr: 3 values, tpr: 3 values, auc: 0.8765)",
+        ),
+        (
+            Lines({"epoch": [1.0, 2.0], "top1": [0.5, 0.6]}),
+            "Lines(columns: {epoch: 2 values, top1: 2 values})",
+        ),
+        ({"cat": 0.9, "dog": 0.8}, "{cat: 0.9, dog: 0.8}"),
+        ([[0, 0.9], [1, 0.8]], "2 values"),
+        (TextTable([1]), "a | b"),  # a type with its own str is printed as that
+    ],
+    ids=["curve", "lines", "dict", "rows", "own_str"],
+)
+def test_console_summarises_tables(value, shown):
+    stream = io.StringIO()
+    ConsoleSink(stream).write(RunEvent("table", "t", value))
+    assert stream.getvalue() == f"t = {shown}\n"
 
 
 def test_output_sink_is_abstract():

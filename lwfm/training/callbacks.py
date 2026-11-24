@@ -80,6 +80,8 @@ class Callback:
 
 
 def check_callbacks(callbacks: Sequence[Callback]) -> None:
+    """Rejects anything that isn't a Callback, and any on_* method that isn't a hook
+    (e.g. a misspelled one, which would otherwise never run)."""
     for callback in callbacks:
         if not isinstance(callback, Callback):
             raise TypeError(f"{callback!r} is not a Callback")
@@ -258,6 +260,46 @@ class ModelCheckpoint(Callback):
             name=event_name,
             step=state.global_step,
         )
+
+
+class RestoreBestWeights(Callback):
+    """Trains for the full budget, then gives `node` back its weights from the
+    validation with the best `monitored_metric`. The copy is kept in memory, and is
+    restored even after Ctrl-C or a crash."""
+
+    def __init__(
+        self, node: str, monitored_metric: str, goal: Literal["max", "min"] = "max"
+    ):
+        check_goal(goal)
+        self.node, self.monitored_metric = node, monitored_metric
+        self.goal: Literal["max", "min"] = goal
+        self.best_value: float | None = None
+        self.best_weights: dict | None = None
+
+    def on_fit_start(self, state: "TrainingState") -> None:
+        if self.node not in state.graph.nodes:
+            raise ValueError(
+                f"RestoreBestWeights keeps node {self.node!r}, but the graph has "
+                f"{list(state.graph.nodes)}"
+            )
+        require_metric(self, self.monitored_metric, state)
+        self.best_value, self.best_weights = None, None
+
+    def on_validation_end(
+        self, state: "TrainingState", metrics: dict[str, float]
+    ) -> None:
+        value = metrics[self.monitored_metric]
+        if improved(value, self.best_value, self.goal):
+            weights = state.graph.deployable_model(self.node).state_dict()
+            self.best_value = value
+            # clone: state_dict tensors share memory with the weights still training
+            self.best_weights = {
+                name: t.detach().clone() for name, t in weights.items()
+            }
+
+    def on_fit_end(self, state: "TrainingState", result: "TrainingResult") -> None:
+        if self.best_weights is not None:
+            state.graph.deployable_model(self.node).load_state_dict(self.best_weights)
 
 
 class EMAUpdate(Callback):

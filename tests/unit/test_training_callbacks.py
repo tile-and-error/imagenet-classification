@@ -15,6 +15,7 @@ from lwfm.training.callbacks import (
     EMAUpdate,
     LossWeightSchedule,
     ModelCheckpoint,
+    RestoreBestWeights,
     improved,
 )
 
@@ -300,6 +301,49 @@ def test_checkpoint_rejects_an_unknown_node(tmp_path):
         ModelCheckpoint(tmp_path, node="teacher").on_fit_start(
             bare_state(graph, loss, optimizer)
         )
+
+
+# --- RestoreBestWeights ----------------------------------------------------------
+
+
+def test_restore_best_weights_ends_with_the_best_validations_weights():
+    node, graph, loss, optimizer = setup()
+    seen = {}
+
+    class Record(Callback):  # registered first: sees the weights before any restore
+        def on_validation_end(self, state, metrics):
+            seen.setdefault("best", copy.deepcopy(node.module.state_dict()))
+
+        def on_fit_end(self, state, result):
+            seen["final"] = copy.deepcopy(node.module.state_dict())
+
+    # The constant metric only "improves" at the first validation, so that one is best
+    Trainer(device="cpu", max_epochs=3).fit(
+        graph,
+        batches(2),
+        loss,
+        optimizer,
+        val_loader=batches(1),
+        metrics=constant_metric(),
+        callbacks=[Record(), RestoreBestWeights("student", "const")],
+    )
+    for name, value in node.module.state_dict().items():
+        torch.testing.assert_close(value, seen["best"][name])
+        assert not torch.equal(value, seen["final"][name])  # training moved on
+
+
+@pytest.mark.parametrize(
+    ("callback", "match"),
+    [
+        (RestoreBestWeights("studnet", "top1"), "graph has"),
+        (RestoreBestWeights("student", "top5"), "monitors 'top5'"),
+    ],
+    ids=["unknown_node", "unknown_metric"],
+)
+def test_restore_best_weights_checks_its_node_and_metric(callback, match):
+    _, graph, _, _ = setup()
+    with pytest.raises(ValueError, match=match):
+        callback.on_fit_start(bare_state(graph, None, None))
 
 
 # --- EMAUpdate ------------------------------------------------------------------

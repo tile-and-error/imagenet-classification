@@ -3,6 +3,7 @@ import json
 import pytest
 import torch
 from torch import nn
+from torchmetrics import SumMetric
 from torchmetrics.classification import MulticlassAccuracy
 
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
@@ -227,6 +228,19 @@ def test_a_run_a_callback_stops_still_ends_with_curves(sink):
     # The stop wasn't known before validating, so one curves-only pass follows
     assert sink.steps_of("eval/val/top1") == [2]  # metrics aren't repeated
     assert sink.steps_of("eval/val/confusion") == [2]
+
+
+def test_limits_cap_every_epoch_and_every_validation():
+    _, graph, loss, optimizer = setup()
+    count = MetricBinding("n", SumMetric(), ["targets.one"])  # images seen
+    trainer = Trainer(
+        device="cpu", max_epochs=2, limit_train_batches=2, limit_val_batches=1
+    )
+    result = trainer.fit(
+        graph, batches(5), loss, optimizer, val_loader=batches(3), metrics=[count]
+    )
+    assert (result.global_step, result.epochs_completed) == (4, 2)  # 2 of 5 per epoch
+    assert [values["n"] for _, values in result.history] == [4.0, 4.0]  # 1 of 3
 
 
 def test_frozen_teacher_stays_in_eval_and_unchanged():
@@ -491,6 +505,8 @@ def test_empty_loader_fails():
             "curves_every_n_validations",
         ),
         ({"max_steps": 1, "log_every_n_steps": 0}, "log_every_n_steps"),
+        ({"max_steps": 1, "limit_train_batches": 0}, "limit_train_batches"),
+        ({"max_steps": 1, "limit_val_batches": 0}, "limit_val_batches"),
         ({"max_steps": 1, "accumulate_grad_batches": 0}, "accumulate_grad_batches"),
         ({"max_steps": 1, "precision": "fp8"}, "precision"),
         ({"max_steps": 1, "gradient_clip_norm": 0.0}, "gradient_clip_norm"),
