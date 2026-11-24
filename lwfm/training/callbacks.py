@@ -83,11 +83,11 @@ def check_callbacks(callbacks: Sequence[Callback]) -> None:
     for callback in callbacks:
         if not isinstance(callback, Callback):
             raise TypeError(f"{callback!r} is not a Callback")
-        unknown = sorted(
+        unknown = [
             name
-            for name in dir(callback)
+            for name in dir(callback)  # already sorted
             if name.startswith("on_") and name not in HOOKS
-        )
+        ]
         if unknown:
             raise ValueError(
                 f"{type(callback).__name__} defines {unknown}, which are not hooks; "
