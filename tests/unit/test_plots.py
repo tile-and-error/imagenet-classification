@@ -58,6 +58,16 @@ def test_curve_types_are_drawn(tmp_path):
     assert png_names(tmp_path) == ["confusion.png", "pr.png", "roc.png"]
 
 
+def test_a_table_with_a_draw_method_draws_itself(tmp_path):
+    class Dots:
+        def draw(self, axes):
+            axes.scatter([0, 1], [1, 0])
+
+    sink = PlotSink(tmp_path)
+    sink.write(RunEvent("table", "eval/val/dots", Dots(), step=5))
+    assert png_names(tmp_path) == ["eval_val_dots_step5.png"]
+
+
 def test_each_validation_step_keeps_its_own_table_plot(tmp_path):
     sink = PlotSink(tmp_path)
     for step in [100, 200]:

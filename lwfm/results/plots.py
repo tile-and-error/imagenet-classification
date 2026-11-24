@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeGuard
+from typing import Any, Protocol, TypeGuard, runtime_checkable
 
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure  # no pyplot: no GUI backend or global state
@@ -10,7 +10,17 @@ from lwfm.results.events import RunEvent
 from lwfm.results.sinks import OutputSink
 
 type Columns = dict[str, list[float]]
-type Table = Columns | ROCCurve | PRCurve | ConfusionMatrix
+
+
+@runtime_checkable
+class Drawable(Protocol):
+    """A table type of your own that draws itself, e.g. a dataclass built by a
+    `CurveBinding`."""
+
+    def draw(self, axes: Axes) -> None: ...
+
+
+type Table = Columns | ROCCurve | PRCurve | ConfusionMatrix | Drawable
 
 
 class PlotSink(OutputSink):
@@ -23,14 +33,15 @@ class PlotSink(OutputSink):
       `train_loss_total.png`. Scalars without a step are skipped.
     - Tables, as soon as they arrive: a `table` event whose value is a `ROCCurve`,
       `PRCurve` or `ConfusionMatrix` (from `lwfm.results.curves`) is drawn in that
-      graph's standard form. Any other named columns of numbers, e.g.
+      graph's standard form, and any other value with a `draw(axes)` method (see
+      `Drawable`) draws itself. Named columns of numbers, e.g.
       `{"epoch": [...], "top1": [...]}`, are drawn with the first column on the x
       axis and each other column as a line. `eval/val/roc` at step 120 is saved as
       `eval_val_roc_step120.png`, so each validation keeps its own plot; without a
       step, as `eval_val_roc.png`.
 
-    For any other plot, draw the figure yourself and save it with
-    `save_artifact(..., figure.savefig, ...)`.
+    For a plot that isn't a table, e.g. one drawn after training, draw the figure
+    yourself and save it with `save_artifact(..., figure.savefig, ...)`.
     """
 
     def __init__(self, plot_dir: str | Path):
@@ -43,7 +54,9 @@ class PlotSink(OutputSink):
             value = float(event.value)  # type: ignore[arg-type]  # numbers only
             self.scalar_series.setdefault(event.name, []).append((event.step, value))
         elif event.kind == "table" and (
-            type(event.value) in DRAWERS or is_columns(event.value)
+            type(event.value) in DRAWERS
+            or isinstance(event.value, Drawable)
+            or is_columns(event.value)
         ):
             self._save(event.name, event.value, event.step)  # type: ignore[arg-type]
 
@@ -58,7 +71,12 @@ class PlotSink(OutputSink):
     def _save(self, name: str, table: Table, step: int | None = None) -> None:
         figure = Figure(figsize=(5, 4), layout="constrained")
         axes = figure.subplots()
-        DRAWERS.get(type(table), draw_columns)(axes, table)
+        if type(table) in DRAWERS:
+            DRAWERS[type(table)](axes, table)
+        elif isinstance(table, Drawable):
+            table.draw(axes)
+        else:
+            draw_columns(axes, table)  # type: ignore[arg-type]  # checked in write
         axes.set_title(name if step is None else f"{name} at step {step}")
         file_name = name.replace("/", "_") + ("" if step is None else f"_step{step}")
         self.plot_dir.mkdir(parents=True, exist_ok=True)
