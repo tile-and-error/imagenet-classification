@@ -41,6 +41,8 @@ class Trainer:
     `accumulate_grad_batches=k`, one step is k batches. Without `val_every_n_steps`,
     validation runs after every epoch. Either way, a run that stops part-way through
     an epoch validates once more, so it always ends with a validation result.
+    Curves passed to `fit` are built at the last validation only, or also at every
+    `curves_every_n_validations`-th one.
 
     With an output sink, `fit` first writes a `trainer/settings` message holding the
     loop settings, the torch seed and the optimizer, scheduler and callbacks, so
@@ -57,6 +59,7 @@ class Trainer:
         accumulate_grad_batches: int = 1,
         gradient_clip_norm: float | None = None,
         val_every_n_steps: int | None = None,
+        curves_every_n_validations: int | None = None,
         log_every_n_steps: int = 50,
         step_fn: StepFn = default_step,
     ):
@@ -66,6 +69,7 @@ class Trainer:
             "max_epochs": max_epochs,
             "max_steps": max_steps,
             "val_every_n_steps": val_every_n_steps,
+            "curves_every_n_validations": curves_every_n_validations,
             "accumulate_grad_batches": accumulate_grad_batches,
             "log_every_n_steps": log_every_n_steps,
         }
@@ -85,6 +89,7 @@ class Trainer:
         self.accumulate_grad_batches = accumulate_grad_batches
         self.gradient_clip_norm = gradient_clip_norm
         self.val_every_n_steps = val_every_n_steps
+        self.curves_every_n_validations = curves_every_n_validations
         self.log_every_n_steps = log_every_n_steps
         self.step_fn = step_fn
 
@@ -149,6 +154,17 @@ class Trainer:
             last_step_validated = bool(history) and history[-1][0] == state.global_step
             if val_loader is not None and not last_step_validated:
                 self._validate(state, val_loader, metrics, curves, history)
+            if val_loader is not None and curves and not state.curves_built:
+                # A callback ended the run at a validation that had no curves
+                Evaluator().evaluate(
+                    graph,
+                    val_loader,
+                    [],
+                    curve_bindings=curves,
+                    device=self.device,
+                    output_sink=output_sink,
+                    training_step=state.global_step,
+                )
         except (KeyboardInterrupt, Exception) as error:
             # Ctrl-C or a crash: callbacks still get on_fit_end (so "last" is saved),
             # then the original error propagates, for OutputRouter to record. A
@@ -236,13 +252,19 @@ class Trainer:
         history: History,
     ) -> None:
         """Runs the metrics over `val_loader`, records them, and tells the callbacks."""
+        # Curves at the last validation (if training is about to stop) and at every
+        # n-th; the rest skip them
+        every = self.curves_every_n_validations
+        state.curves_built = self._stop_reason(state) is not None or (
+            every is not None and (len(history) + 1) % every == 0
+        )
         # The Evaluator logs eval/val/<metric> and <curve>, and restores the graph's
         # train mode
         evaluation = Evaluator().evaluate(
             state.graph,
             val_loader,
             metrics,
-            curve_bindings=curves,
+            curve_bindings=curves if state.curves_built else (),
             device=self.device,
             output_sink=state.output_sink,
             training_step=state.global_step,
@@ -302,6 +324,7 @@ class Trainer:
             "accumulate_grad_batches": self.accumulate_grad_batches,
             "gradient_clip_norm": self.gradient_clip_norm,
             "val_every_n_steps": self.val_every_n_steps,
+            "curves_every_n_validations": self.curves_every_n_validations,
             "log_every_n_steps": self.log_every_n_steps,
             "step_fn": qualified_name(self.step_fn),
             # The seed torch's default generator started from: the one given to

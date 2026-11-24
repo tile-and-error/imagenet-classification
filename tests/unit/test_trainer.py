@@ -154,23 +154,61 @@ def test_val_every_n_steps_and_a_final_validation():
     assert [step for step, _ in result.history] == [2, 4, 5]
 
 
-def test_curves_are_drawn_at_every_validation(sink):
+def confusion():
+    return CurveBinding("confusion", ConfusionMatrix.from_scores, CE_READS)
+
+
+@pytest.mark.parametrize(
+    ("every", "curve_steps"),
+    [(None, [5]), (2, [4, 5]), (1, [2, 4, 5])],
+    ids=["last_only", "every_2nd", "every"],
+)
+def test_curves_are_built_at_the_last_and_every_nth_validation(
+    sink, every, curve_steps
+):
     _, graph, loss, optimizer = setup()
-    confusion = CurveBinding("confusion", ConfusionMatrix.from_scores, CE_READS)
-    Trainer(device="cpu", max_epochs=1, val_every_n_steps=2).fit(
+    trainer = Trainer(
+        device="cpu",
+        max_epochs=1,
+        val_every_n_steps=2,
+        curves_every_n_validations=every,
+    )
+    trainer.fit(
         graph,
         batches(5),
         loss,
         optimizer,
         val_loader=batches(2),
         metrics=accuracy(),
-        curves=[confusion],
+        curves=[confusion()],
         output_sink=sink,
     )
-    assert sink.steps_of("eval/val/confusion") == [2, 4, 5]
-    assert all(
-        sum(map(sum, e.value.matrix)) == 8 for e in sink.events if e.kind == "table"
-    )  # all 2 * 4 validation samples, each time
+    assert sink.steps_of("eval/val/top1") == [2, 4, 5]
+    assert sink.steps_of("eval/val/confusion") == curve_steps
+    tables = [event.value for event in sink.events if event.kind == "table"]
+    assert all(sum(map(sum, table.matrix)) == 8 for table in tables)  # all 2 * 4
+
+
+def test_a_run_a_callback_stops_still_ends_with_curves(sink):
+    class StopAtFirstValidation(Callback):
+        def on_validation_end(self, state, val_metrics):
+            state.should_stop = True
+
+    _, graph, loss, optimizer = setup()
+    Trainer(device="cpu", max_epochs=3).fit(
+        graph,
+        batches(2),
+        loss,
+        optimizer,
+        val_loader=batches(1),
+        metrics=accuracy(),
+        curves=[confusion()],
+        callbacks=[StopAtFirstValidation()],
+        output_sink=sink,
+    )
+    # The stop wasn't known before validating, so one curves-only pass follows
+    assert sink.steps_of("eval/val/top1") == [2]  # metrics aren't repeated
+    assert sink.steps_of("eval/val/confusion") == [2]
 
 
 def test_frozen_teacher_stays_in_eval_and_unchanged():
@@ -397,9 +435,8 @@ def test_val_loader_and_metrics_go_together():
         trainer.fit(graph, batches(1), loss, optimizer, val_loader=batches(1))
     with pytest.raises(ValueError, match="together"):
         trainer.fit(graph, batches(1), loss, optimizer, metrics=accuracy())
-    confusion = CurveBinding("confusion", ConfusionMatrix.from_scores, CE_READS)
     with pytest.raises(ValueError, match="curves"):
-        trainer.fit(graph, batches(1), loss, optimizer, curves=[confusion])
+        trainer.fit(graph, batches(1), loss, optimizer, curves=[confusion()])
 
 
 def test_empty_loader_fails():
@@ -415,6 +452,10 @@ def test_empty_loader_fails():
         ({"max_epochs": 0}, "max_epochs"),
         ({"max_steps": 0}, "max_steps"),
         ({"max_steps": 1, "val_every_n_steps": 0}, "val_every_n_steps"),
+        (
+            {"max_steps": 1, "curves_every_n_validations": 0},
+            "curves_every_n_validations",
+        ),
         ({"max_steps": 1, "log_every_n_steps": 0}, "log_every_n_steps"),
         ({"max_steps": 1, "accumulate_grad_batches": 0}, "accumulate_grad_batches"),
         ({"max_steps": 1, "precision": "fp8"}, "precision"),

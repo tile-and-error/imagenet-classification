@@ -1,5 +1,5 @@
-"""Common evaluation graphs as plain data, sent as the value of a `table` event. At
-every validation, through the trainer:
+"""Common evaluation graphs as plain data, sent as the value of a `table` event. During
+training, at the last validation (or every n-th, see `Trainer`):
 
     Trainer().fit(..., curves=[CurveBinding("roc", ROCCurve.from_scores, reads)])
 

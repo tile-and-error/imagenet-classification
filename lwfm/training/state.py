@@ -57,6 +57,8 @@ class TrainingState:
     accumulated: int = 0
     is_last_batch: bool = False
     last_val_metrics: dict[str, float] = field(default_factory=dict)
+    # Whether the latest validation built the curves passed to fit
+    curves_built: bool = False
     # Set by a callback to stop training at the next optimizer step
     should_stop: bool = False
     # Set by steps.backward, so the trainer can tell whether a custom step used it

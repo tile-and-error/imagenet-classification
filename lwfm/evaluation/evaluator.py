@@ -39,8 +39,10 @@ class Evaluator:
         output_sink: OutputSink | None = None,
         training_step: int | None = None,
     ) -> EvaluationResult:
-        if not metric_bindings:
-            raise ValueError("evaluate needs at least one MetricBinding")
+        if not metric_bindings and not curve_bindings:
+            raise ValueError(
+                "evaluate needs at least one MetricBinding or CurveBinding"
+            )
         bindings = [*metric_bindings, *curve_bindings]
         names = [binding.name for binding in bindings]
         if len(set(names)) != len(names):

@@ -179,6 +179,13 @@ def test_curve_values_reset_between_runs():
     assert sum(map(sum, second.curves["confusion"].matrix)) == 1  # one sample
 
 
+def test_curves_alone_need_no_metric():
+    result = Evaluator().evaluate(
+        logits_graph(), LOADER, [], curve_bindings=[confusion()], device=CPU
+    )
+    assert result.metric_values == {} and list(result.curves) == ["confusion"]
+
+
 def test_a_curve_and_a_metric_cannot_share_a_name():
     clash = CurveBinding("top1", ConfusionMatrix.from_scores, CE_READS)
     with pytest.raises(ValueError, match="unique"):

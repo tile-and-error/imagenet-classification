@@ -126,7 +126,10 @@ def test_a_training_run_plots_its_curves_at_each_validation(tmp_path):
     _, graph, loss, optimizer = setup()
     confusion = CurveBinding("confusion", ConfusionMatrix.from_scores, CE_READS)
     with OutputRouter(PlotSink(tmp_path)) as sink:
-        Trainer(device="cpu", max_steps=4, val_every_n_steps=2).fit(
+        trainer = Trainer(
+            device="cpu", max_steps=4, val_every_n_steps=2, curves_every_n_validations=1
+        )
+        trainer.fit(
             graph,
             batches(4),
             loss,
