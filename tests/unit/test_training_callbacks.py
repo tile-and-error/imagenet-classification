@@ -368,6 +368,12 @@ def test_ema_rejects_different_architectures():
         EMAUpdate("student", "teacher").on_fit_start(state)
 
 
+def test_ema_rejects_an_unknown_node():
+    _, _, graph = ema_graph()
+    with pytest.raises(ValueError, match="no node 'techer'"):
+        EMAUpdate("student", "techer").on_fit_start(bare_state(graph, None, None))
+
+
 def test_ema_rejects_a_bad_momentum():
     with pytest.raises(ValueError, match="momentum"):
         EMAUpdate("student", "teacher", momentum=1.5)

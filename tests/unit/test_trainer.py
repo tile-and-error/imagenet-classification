@@ -189,6 +189,24 @@ def test_curves_are_built_at_the_last_and_every_nth_validation(
     assert all(sum(map(sum, table.matrix)) == 8 for table in tables)  # all 2 * 4
 
 
+def test_curves_arrive_when_the_last_step_is_validated_mid_epoch(sink):
+    # Step 4 ends the only epoch, but is validated before the epoch is counted, so
+    # the end isn't known yet: one curves-only pass follows
+    _, graph, loss, optimizer = setup()
+    Trainer(device="cpu", max_epochs=1, val_every_n_steps=2).fit(
+        graph,
+        batches(4),
+        loss,
+        optimizer,
+        val_loader=batches(1),
+        metrics=accuracy(),
+        curves=[confusion()],
+        output_sink=sink,
+    )
+    assert sink.steps_of("eval/val/top1") == [2, 4]  # metrics aren't repeated
+    assert sink.steps_of("eval/val/confusion") == [4]
+
+
 def test_a_run_a_callback_stops_still_ends_with_curves(sink):
     class StopAtFirstValidation(Callback):
         def on_validation_end(self, state, val_metrics):
@@ -437,6 +455,22 @@ def test_val_loader_and_metrics_go_together():
         trainer.fit(graph, batches(1), loss, optimizer, metrics=accuracy())
     with pytest.raises(ValueError, match="curves"):
         trainer.fit(graph, batches(1), loss, optimizer, curves=[confusion()])
+
+
+def test_a_failing_on_fit_end_after_a_crash_keeps_the_original_error():
+    class CrashThenFailToSave(Callback):
+        def on_step_start(self, state, batch):
+            raise RuntimeError("step crashed")
+
+        def on_fit_end(self, state, result):
+            raise OSError("disk full")
+
+    _, graph, loss, optimizer = setup()
+    with pytest.raises(RuntimeError, match="step crashed") as caught:
+        Trainer(device="cpu", max_steps=1).fit(
+            graph, batches(1), loss, optimizer, callbacks=[CrashThenFailToSave()]
+        )
+    assert caught.value.__notes__ == ["on_fit_end also failed: OSError('disk full')"]
 
 
 def test_empty_loader_fails():

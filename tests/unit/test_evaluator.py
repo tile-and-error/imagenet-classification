@@ -216,6 +216,20 @@ def test_a_curve_reads_any_number_of_values_in_order():
     assert result.curves["shapes"].shapes == [[4, 6], [4], [4, 6]]  # batches joined
 
 
+def test_a_failing_curve_names_itself_and_what_it_read():
+    def broken(scores, labels):
+        raise RuntimeError("bad curve")
+
+    curve = CurveBinding("broken", broken, CE_READS)
+    with pytest.raises(RuntimeError, match="bad curve") as caught:
+        Evaluator().evaluate(
+            logits_graph(), LOADER, [top_k(1)], curve_bindings=[curve], device=CPU
+        )
+    # Shapes of the whole split, both batches joined
+    note = "in curve 'broken', reading student.logits (4, 6), targets.class (4,)"
+    assert caught.value.__notes__ == [note]
+
+
 def test_a_curve_must_build_something_drawable():
     plain = CurveBinding("plain", lambda scores, labels: {"n": len(scores)}, CE_READS)
     with pytest.raises(TypeError, match="'plain' built a dict, which has no draw"):
