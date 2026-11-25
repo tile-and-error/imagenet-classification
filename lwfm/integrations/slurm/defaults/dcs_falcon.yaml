@@ -1,0 +1,4 @@
+id: "falcon_default"
+partition: "falcon"
+cpus-per-task: 12
+gpus: 1
