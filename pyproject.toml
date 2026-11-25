@@ -15,8 +15,6 @@ dependencies = [
     "pyarrow>=26.0.1",
     "pandas>=3.0.2",
     "torchmetrics>=1.9.0",
-    "pydantic", # For YAML Validation
-    "jinja2" # For Batch Compute
 ]
 
 # Enable (optionally) Jupyter Notebooks

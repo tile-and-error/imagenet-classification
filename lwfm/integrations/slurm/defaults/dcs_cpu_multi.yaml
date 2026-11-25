@@ -1,3 +1,0 @@
-id: "cpu_multi_default"
-cpus-per-task: 128
-mem-per-cpu: 3000

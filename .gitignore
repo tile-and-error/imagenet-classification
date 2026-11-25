@@ -36,12 +36,7 @@ htmlcov/
 !.env.example
 
 # Downloaded datasets and temporary shard downloads
-# data/
+data/
 _download/
 
 .DS_Store
-.DS_Store/
-
-# Ignore model runs
-runs/
-configs/devices/
