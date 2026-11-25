@@ -31,16 +31,18 @@ losses:
 metrics:
   - name: top1
     type: topk_accuracy # micro average (§3.6)
-    k: 1
     inputs: [student.logits, targets.class] # update(preds, target)
-    num_classes: 10
-    average: micro
+    kwargs:
+      top_k: 1
+      num_classes: 10
+      average: micro
   - name: top5
     type: topk_accuracy
-    k: 5
     inputs: [student.logits, targets.class]
-    num_classes: 10
-    average: micro
+    kwargs:
+      top_k: 5
+      num_classes: 10
+      average: micro
 training:
   optimizer: { name: sgd, lr: 0.01 }
   max_epochs: 1

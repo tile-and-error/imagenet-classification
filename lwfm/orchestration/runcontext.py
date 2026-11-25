@@ -9,6 +9,7 @@ from lwfm.training.trainer import Trainer
 from lwfm.evaluation.evaluator import Evaluator
 from lwfm.data.modules import DataModule
 from lwfm.core.losses import LossComposer
+from lwfm.evaluation.metrics import MetricBinding
 
 @dataclass
 class RunContext:
@@ -16,6 +17,7 @@ class RunContext:
     config: ExperimentConfig
     run_id: int
     run_dir: Path
+    output_dir: Path
     execution_graph: ExecutionGraph
     trainer: Trainer
     evaluator: Evaluator
@@ -23,5 +25,6 @@ class RunContext:
     output_router: OutputRouter
     data_module: DataModule
     loss_composer: LossComposer
+    metric_bindings: list[MetricBinding]
 
     started_at: datetime

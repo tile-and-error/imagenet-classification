@@ -16,6 +16,7 @@ from lwfm.training.trainer import Trainer
 from lwfm.core.losses import LossComposer
 from lwfm.data.factory import build_data_module
 from lwfm.core.lossfactory import build_loss_composer
+from lwfm.evaluation.factory import build_metric_binding
 
 class Experiment:
     def __init__(
@@ -36,18 +37,23 @@ class Experiment:
         time_utc = datetime.now(timezone.utc)
         run_id = random.randint(1000000000, 9999999999)
         experiment_name = self.config.name
+
+        output_name = f"{time_utc.strftime("%Y-%m-%d_%H-%M-%S")}_{experiment_name}_{run_id}"
+        output_dir = Path().cwd().parent / config.outputs["root"] / output_name
         
         self.context = RunContext(
             experiment_name,
             self.config,
             run_id,
             Path.cwd(),
+            output_dir,
             pipeline,
             build_trainer(config.training, config.device),
             Evaluator(),
-            OutputRouter(build_routers(config.outputs, experiment_name, time_utc, run_id)),
+            OutputRouter(build_routers(config.outputs, output_dir)),
             build_data_module(config.data, config.seed),
             build_loss_composer(config.losses),
+            build_metric_binding(config.metrics),
             time_utc
         )
 
@@ -55,6 +61,9 @@ class Experiment:
 
     def run(self):
         self.recipe.execute(self.context)
+
+    def __enter__(self):
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         # Safely close the experiment
@@ -71,11 +80,9 @@ def build_trainer(config, device):
         max_steps=config["max_steps"],
     )
 
-def build_routers(outputs, experiment_name, time_utc, run_id):
+def build_routers(outputs, file_dir):
     for i in range(len(outputs["sinks"])):
-        if outputs["sinks"][i] == "local":
-            output_dir = f"{time_utc.strftime("%Y-%m-%d_%H-%M-%S")}_{experiment_name}_{run_id}" 
-            file_dir = Path().cwd().parent / outputs["root"] / output_dir
+        if outputs["sinks"][i] == "local": 
             return LocalFileSink(file_dir)
         elif outputs["sinks"][i] == "console":
             return ConsoleSink()

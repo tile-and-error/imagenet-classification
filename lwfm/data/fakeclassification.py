@@ -27,15 +27,15 @@ class FakeClassificationDataset(Dataset):
             generator=generator
         )
 
-        def __len__(self):
-            return len(self.labels)
+    def __len__(self):
+        return len(self.labels)
 
-        def __getitem__(self, index):
-            return {
-                "inputs": {"image": self.images[index]},
-                "targets": {"class": self.labels[index]},
-                "meta": {"sample_id": f"fake_{index:06d}"},
-            }
+    def __getitem__(self, index):
+        return {
+            "inputs": {"image": self.images[index]},
+            "targets": {"class": self.labels[index]},
+            "meta": {"sample_id": f"fake_{index:06d}"},
+        }
 
 class FakeClassificationDataModule(DataModule):
     def __init__(

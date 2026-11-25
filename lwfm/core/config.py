@@ -14,3 +14,4 @@ class ExperimentConfig(BaseModel):
     training: dict
     recipe: dict
     outputs: dict
+    deployment: dict

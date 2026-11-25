@@ -35,7 +35,7 @@ class FitStage(Stage):
         loss = ctx.loss_composer
         optimizer = build_optimizer(
             (p for p in graph.parameters() if p.requires_grad),
-            ctx.config.training
+            ctx.config.training["optimizer"]
         )
 
         extra_config = {}
@@ -43,13 +43,13 @@ class FitStage(Stage):
         if "scheduler" in ctx.config.training:
             if "max_epochs" not in ctx.config.training:
                 raise ValueError("Max Epochs must be defined to use scheduler")
-            if "scheduler_interval" not in ctx.config.training:
+            if "interval" not in ctx.config.training["scheduler"]:
                 raise ValueError("Scheduler Interval must be defined to use scheduler")
             
             scheduler = build_scheduler(ctx.config.training["scheduler"], optimizer, ctx.config.training["max_epochs"], len(train_loader))
 
             extra_config["scheduler"] = scheduler
-            extra_config["scheduler_interval"] = ctx.config.training["scheduler_interval"]
+            extra_config["scheduler_interval"] = ctx.config.training["scheduler"]["interval"]
 
         result = ctx.trainer.fit(
             graph, 
@@ -57,22 +57,23 @@ class FitStage(Stage):
             loss, 
             optimizer,
             val_loader=ctx.data_module.val_dataloader(),
-            # metrics=build_metric_binding() TODO: Which set of metrics??
+            metrics=ctx.metric_bindings, # metrics=build_metric_binding() TODO: Which set of metrics??
             output_sink=ctx.output_router,
-            *extra_config
+            **extra_config
         )
         # Save Checkpoint
         save_checkpoint(
-            ctx.run_dir,
+            ctx.output_dir,
             graph,
             optimizer,
-            result.epoch,
-            result.global_step
+            result.epochs_completed,
+            result.global_step,
+            ctx.config.deployment["node"]
         )
         # Record Output
         artefacts = {
-            "fit": str(ctx.run_dir / "artifacts" / "fit_last.pt"),
-            "model": str(ctx.run_dir / "artifacts" / "model_weights.pt")
+            "fit": str(ctx.output_dir / "artifacts/fit_last.pt"),
+            "model": str(ctx.output_dir / "artifacts/model_weights.pt")
         }
 
         return StageResult(
@@ -87,7 +88,6 @@ class EvaluateStage(Stage):
 
     def execute(self, ctx: RunContext) -> StageResult:
         graph = ctx.execution_graph
-        metric_bindings = build_metric_binding(ctx.config.metrics)
 
         if self.split == "val":
             ctx.data_module.setup("val")
@@ -101,27 +101,32 @@ class EvaluateStage(Stage):
         result = ctx.evaluator.evaluate(
             graph,
             loader,
-            metric_bindings,
+            ctx.metric_bindings,
             device = ctx.config.device,
             output_sink=ctx.output_router,
             split_name=self.split
         )
 
-        measuerments = {
+        measurements = {
             f"{self.split}/{name}": value
             for name, value in result.metric_values.items()
         }
 
         return StageResult(
             {},
-            measuerments=measuerments,
+            measurements,
+            "completed"
         )
 
 class BenchmarkStage(Stage):
     name = "benchmark"
 
     def execute(self, ctx: RunContext) -> StageResult:
-        pass
+        return StageResult(
+            {},
+            {},
+            "completed"
+        )
 
 def save_checkpoint(
         path: Path,
@@ -138,13 +143,16 @@ def save_checkpoint(
         "global_step": global_step
     }
 
-    fit_path = path / "artifacts" / "fit_last.pt"
+    fit_path = path / "artifacts/fit_last.pt"
     temp_path = fit_path.with_suffix(".tmp")
+
+    temp_path.parent.mkdir(parents=True, exist_ok=True)
+
     torch.save(checkpoint, temp_path)
     os.replace(temp_path, fit_path)
 
     student = graph.deployable_model(deployable_name)
-    student_path = path / "artifacts" / "model_weights.pt"
+    student_path = path / "artifacts/model_weights.pt"
     temp_path = student_path.with_suffix(".tmp")
     torch.save(student.state_dict(), temp_path)
     os.replace(temp_path, student_path)
