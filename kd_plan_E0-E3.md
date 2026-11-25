@@ -326,8 +326,10 @@ torchvision's two ViT-B/16 weights replace DeiT-B and the timm ViT.
 | `vit_b16_swag` | `ViT_B_16_Weights.IMAGENET1K_SWAG_LINEAR_V1` (weakly supervised) | 81.9 | 768 |
 | `dinov2_b14` | `torch.hub` `facebookresearch/dinov2`, `dinov2_vitb14_lc` | 84.5 | 768 |
 
-The DINOv2 wrapper's attribute names haven't been checked against the real model yet
-(smoke mode skips it).
+Smoke mode skips DINOv2. The first cluster check (`check_teachers.py`) found that the
+wrapper gave the linear head the wrong input: it needs the class tokens of the last 4
+blocks plus the mean patch token (3840 = 5 × 768). This is fixed, and confirmed when
+`check_teachers.py dinov2_b14` prints `OK`.
 
 ## Experiments (run per student)
 
@@ -339,6 +341,208 @@ The DINOv2 wrapper's attribute names haven't been checked against the real model
 | **E1** | KD sweep, T ∈ {1, 2, 4} × α ∈ {0.5, 0.9} × {plain, class-weighted KD}, total = (1−α)·CE + α·KD | best on val → `MAIN` ×3 + `LONG` ×1 |
 | **E2** | Best E1 KD vs DKD (β = 0.5, β = 8; ramp over 20 epochs) vs DIST, each + CE | top 2 → `MAIN` ×3 |
 | **E3** | CE + EmbedCos; CE + EmbedMSE; best E2 + EmbedCos; EmbedCos only + linear probe | best → `MAIN` ×3 |
+
+### How to read the results
+
+Each experiment below says what it tests, why, which results and plots answer it, and
+what each outcome would mean. Two rules apply throughout:
+
+- **Noise.** E0b's 3 `MAIN` seeds give the run-to-run std of each student. A difference
+  smaller than about 2× that std is not evidence either way. `FAST` sweeps use 1 seed,
+  so they only rank settings. Claims come from the `MAIN` runs (3 seeds).
+- **Val chooses, test reports.** Every choice is made on val. Test numbers are reported
+  but never used to choose.
+
+Where results go: the script writes every table to `runs/<dataset>/<split>/report/`
+(file names below). It draws only one plot, `val_curves_main.png`. The other plots
+listed below are still to be made, from those CSVs and the run folders. Each run's
+`events.jsonl` has its per-epoch metrics. A student's per-class recall and confusion
+matrix aren't recorded, but can be computed from its saved `student.pt`.
+
+### E0a: teachers alone
+
+**Tests.** How well each frozen ImageNet teacher classifies our 11 classes with no
+training: its 1000 logits mapped to our classes, with the "other" shift `b` tuned on
+val. Also what each teacher costs.
+
+**Why.** A student can only learn from the teacher what the teacher knows. E0a gives
+the reference each student is compared with. It also shows whether 64 px images
+upsampled to 224 px hurt some teachers (ViTs, DINOv2) more than others.
+
+**Results:** `e0a_teachers.csv` (val/test balanced accuracy and macro-F1, cost),
+`e0a_shift_<teacher>.csv` (score against `b`), `e0a_per_class_recall.csv`.
+
+**Plots worth making:**
+- balanced accuracy and macro-F1 against `b`, one line per teacher, with `b = log n` marked
+- per-class recall as a heatmap (teacher × class)
+- accuracy against cost (GFLOPs or latency), one point per teacher
+
+| Outcome | Meaning |
+|---|---|
+| One teacher clearly ahead (> 0.05 balanced accuracy) | A candidate for the teacher swaps in E4. E1–E3 still use `TEACHER = "resnet50"`, so they stay comparable |
+| ViTs and DINOv2 well behind the ResNets | Upsampled 64 px images hurt transformers more. On Tiny, prefer a CNN teacher. Don't generalise until ImageNet-1k (E9), where images are native 224 px |
+| Every teacher below ~0.6 | The mapped logits make a weak teacher, so the E0c heads matter more |
+| Flat score curve near the best `b` | The shift is robust to its exact value |
+| Sharp peak in the score curve | The shift is fragile: re-tune it for every new dataset, and don't trust it to transfer |
+| A named class near 0 recall for every teacher | That class is hard at 64 px, or is mapped badly. Check its entry in `download/imagenet_mapping.json`, and expect students to struggle on it too |
+
+### E0b: baseline, no teacher
+
+**Tests.** Each student trained from scratch with class-weighted CE only, on `FAST`
+(1 seed), `MAIN` (3 seeds) and `LONG` (1 seed).
+
+**Why.** It is the reference every KD gain is measured against. Its seed std sets the
+noise floor for every later comparison, and `FAST` / `MAIN` / `LONG` show whether
+training time alone changes the result.
+
+**Results:** `e0b_baselines.csv`, `summary.csv`, `val_curves_main.png`.
+
+**Plots worth making:**
+- val balanced accuracy and training loss against epoch, per student
+- `FAST` / `MAIN` / `LONG` side by side, with error bars for `MAIN`
+
+| Outcome | Meaning |
+|---|---|
+| Seed std of s | KD must beat the baseline by more than ~2s to count |
+| `LONG` clearly above `MAIN` | The baseline is under-trained at 100 epochs. A KD gain at `MAIN` may only mean faster learning, so check E1's `LONG` run |
+| Val peaks early, then falls | Overfitting. Shorten the schedule for **every** run of that student, rather than picking a best epoch per run |
+| ViT-Tiny well below ResNet-18 | Expected: a ViT has no built-in locality, and 17.5k images is little data. That leaves more room for KD to help the ViT, as in DeiT |
+| Baseline at or above the teacher | Logit KD can add little knowledge. Any KD gain is then regularisation, not knowledge from the teacher |
+
+### E0c: which teacher variant to distil from
+
+**Tests.** (a) Linear and MLP heads, trained on the frozen teacher's embedding, against
+the mapped logits, each scored alone. (b) Which of the three produces the best students
+with one fixed KD setting (T = 4, α = 0.9, `FAST`). The winner teaches E1–E3.
+
+**Why.** A more accurate teacher doesn't always give a better student. A near-certain
+teacher gives almost one-hot targets, which carry little more than the label. E0c
+chooses the teacher by the students it produces. It is also the method that pathology
+teachers will need, since they have no class head.
+
+**Results:** `e0c_heads.csv` (head training: weight decay, steps, confidence),
+`e0c_teacher_variants.csv` (each variant alone), `e0c_student_check.csv` (variant ×
+student val balanced accuracy, with `no-teacher` for reference).
+
+**Plots worth making:**
+- teacher accuracy (x) against student accuracy (y), one point per variant × student
+- teacher confidence on train images (mean top probability) against the student's gain
+  over the baseline
+
+| Outcome | Meaning |
+|---|---|
+| Heads beat the mapped logits, both alone and as a teacher | As expected: the heads fix both the "other" prior and the upsampling shift. Heads trained like this are the route for pathology teachers |
+| The most accurate variant is not the best teacher (e.g. MLP alone > linear alone, but linear gives better students) | How soft the teacher's targets are matters more than its accuracy. Check the confidence of every future learned head, not only its accuracy |
+| Every variant is at or below `no-teacher` | KD at T = 4, α = 0.9 hurts. Most likely the "other" collapse from the debug run. Look at E1's class-weighted KD and α = 0.5 before concluding that KD doesn't work |
+| KD helps one student and not the other (e.g. ViT only) | Report per student. A ViT gaining more from a CNN teacher matches DeiT |
+
+### E1: classic KD (Hinton)
+
+**Tests.** CE + KD over T ∈ {1, 2, 4} × α ∈ {0.5, 0.9} × {plain, class-weighted},
+total = (1−α)·CE + α·KD, on `FAST`. The best setting reruns on `MAIN` (3 seeds) and
+`LONG` (1 seed).
+
+**Why.** It answers the first question: does logit KD help here at all, and with which
+settings? Plain against class-weighted tests the fix for the imbalance problem found
+in the debug run, where KD students learned to predict "other" for everything.
+
+**Results:** `e1_sweep.csv`, `e1_plain_vs_weighted.csv`, `e1_main.csv`, `summary.csv`,
+`val_curves_main.png`.
+
+**Plots worth making:**
+- val balanced accuracy over T × α as a heatmap, plain and weighted side by side, per
+  student
+- baseline against best KD on `MAIN`, with seed error bars: the headline result
+- per-class recall, best KD against baseline, with "other" separate from the named
+  classes (from `student.pt`)
+- the gain over the baseline at `MAIN` and at `LONG`
+
+| Outcome | Meaning |
+|---|---|
+| Best KD beats the baseline by more than the noise on `MAIN` | KD works here. Go on to E2/E3 |
+| Gain at `MAIN`, gone at `LONG` | KD speeds up learning but doesn't raise final accuracy. That matters for compute budgets, not for the final model |
+| Gain grows at `LONG` | Matches "patient" KD (Beyer et al., 2022): consider longer schedules for KD runs |
+| Weighted clearly beats plain | Imbalance ruins plain KD. Make weighted KD the default and add weighting to DKD/DIST. This matters even more for WSIs, where background is > 95 % |
+| Weighted ≈ plain | Imbalance isn't the problem at 80 % "other". Check again on 10 + 190 (95 %) |
+| High T best | The teacher's probabilities on the wrong classes carry useful knowledge ("dark knowledge") |
+| T = 1 best | The teacher's soft structure is noise rather than knowledge, as expected from a weak teacher at 64 px |
+| α = 0.5 beats α = 0.9 | The labels are more reliable than the teacher. A better teacher (E0c) would help more than tuning the loss |
+| No setting beats the baseline | KD doesn't help with this teacher at 64 px. Check teacher quality (E0a/E0c), then test on 10 + 190 and on ImageNet-1k (E9), where the teacher sees native 224 px images |
+
+### E2: does the form of the KD loss matter?
+
+**Tests.** Best E1 KD against DKD (β = 0.5 and β = 8, ramped over 20 epochs) and DIST,
+each with CE, on `FAST`. The top 2 rerun on `MAIN` (3 seeds).
+
+**Why.** Each loss uses the teacher differently:
+- **KD** matches the teacher's whole probability vector.
+- **DKD** splits it into target-class knowledge and knowledge about the other classes,
+  so the second part can be weighted up (β).
+- **DIST** matches how the teacher ranks the classes (correlation) rather than its exact
+  probabilities. That is more robust when the teacher is badly calibrated, or very
+  different from the student.
+
+**Results:** `e2_sweep.csv`, `e2_main.csv`.
+
+**Plots worth making:**
+- baseline / KD / DKD / DIST bars with seed error bars, per student
+- their val curves overlaid
+
+| Outcome | Meaning |
+|---|---|
+| DKD β = 8 beats KD | The teacher's knowledge about the wrong classes is the useful part. With only 11 classes there is little of it, so a gain here is notable; expect more on ImageNet-1k |
+| DKD β = 8 worse than β = 0.5 ≈ KD | Weighting the wrong-class knowledge up amplifies the teacher's noise, as expected from a weak teacher |
+| DIST beats KD | The mismatch between teacher and student (or the teacher's calibration) is the limit. Ranking-based losses are then preferable, likely for ViT students and for learned heads on pathology teachers too |
+| All within noise of KD | The loss form doesn't matter at this scale. Keep plain KD (simplest), and put effort into the teacher instead |
+
+**Caveat:** DKD and DIST aren't class-weighted. If E1's best KD is the weighted one, E2
+compares a weighted loss with unweighted ones, which favours KD. Read a KD win in that
+light.
+
+### E3: distilling the teacher's embedding
+
+**Tests.** CE + EmbedCos; CE + EmbedMSE; best E2 + EmbedCos; EmbedCos only (no labels),
+then a linear probe. A projector maps the student's embedding to the teacher's size.
+
+**Why.** It transfers the teacher's representation, not only its output. Pathology
+foundation models have no class head, and segmentation (E8) needs features, so this is
+the form of KD that carries over. The label-free run shows how much the representation
+alone carries.
+
+**Results:** `e3_sweep.csv`, `e3_main.csv`, `e3_embed_cos.csv` (cosine similarity to
+the teacher's embedding, every 10 epochs).
+
+**Plots worth making:**
+- `embed_cos` against epoch, per setup
+- final `embed_cos` (x) against val balanced accuracy (y): does closer imitation give a
+  better student?
+- bars against the baseline and best E2, with the label-free probe included
+
+| Outcome | Meaning |
+|---|---|
+| CE + cos beats the baseline | The teacher's embedding carries useful knowledge, so feature KD can work with teachers that have no head (pathology) |
+| Best E2 + cos beats best E2 | Logit and feature KD add up: use both |
+| Cos beats MSE | Only the direction of the embedding matters; matching its scale gets in the way |
+| MSE beats cos | The embedding's magnitude carries information too |
+| Label-free probe near the baseline | The teacher's features almost replace labels. Promising for WSIs, where labels are scarce |
+| Label-free probe far below the baseline | Labels are still needed alongside the teacher |
+| `embed_cos` rises but accuracy doesn't | The student imitates without benefit: the projector absorbs the difference, or the teacher's features at 64 px aren't relevant to the task |
+
+### Across all experiments: the final figures
+
+1. **Main table:** `summary.csv` on the `MAIN` stage, test mean ± std, every method
+   against the baseline, per student.
+2. **Gain over the baseline** per method and student, with seed error bars: the
+   headline figure.
+3. **Accuracy against cost** (parameters, GFLOPs, latency) for teachers and students:
+   how much of the teacher's accuracy a student keeps, at what fraction of its cost.
+4. **Teacher accuracy against student accuracy**, across E0c and the teachers.
+5. **Per-class recall or a confusion matrix**, baseline against the best method: does KD
+   help the named classes, or only "other"?
+
+Together these say whether KD is worth its cost here, which form to carry to ImageNet-1k
+(E9) and to pathology, and whether the limit is the teacher, the loss or the training
+time.
 
 **Checks** (in the notebook):
 
