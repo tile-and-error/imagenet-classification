@@ -4,7 +4,7 @@ from torch import nn
 
 from lwfm.core.losses import LossBinding, LossComposer
 
-CE_READS = ["student.logits", "targets.class"]
+from conftest import CE_READS
 
 
 @pytest.fixture

@@ -1,12 +1,13 @@
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 
 from lwfm.core.batch import to_device
 from lwfm.core.graph import ExecutionGraph
 from lwfm.core.types import Batch
-from lwfm.evaluation.metrics import MetricBinding
+from lwfm.evaluation.metrics import CurveBinding, MetricBinding
+from lwfm.results.curves import Curve
 from lwfm.results.events import RunEvent
 from lwfm.results.sinks import OutputSink
 
@@ -14,6 +15,7 @@ from lwfm.results.sinks import OutputSink
 @dataclass(frozen=True)
 class EvaluationResult:
     metric_values: dict[str, float]
+    curves: dict[str, Curve] = field(default_factory=dict)
 
 
 class Evaluator:
@@ -22,7 +24,8 @@ class Evaluator:
     the end. The graph's train/eval mode is restored afterwards.
 
     With an `output_sink`, each value is emitted as the scalar
-    `eval/<split_name>/<metric name>` at `training_step`.
+    `eval/<split_name>/<metric name>` at `training_step`, and each curve, built
+    from the whole split, as the table `eval/<split_name>/<curve name>`.
     """
 
     def evaluate(
@@ -31,23 +34,27 @@ class Evaluator:
         data_loader: Iterable[Batch],
         metric_bindings: Sequence[MetricBinding],
         *,
+        curve_bindings: Sequence[CurveBinding] = (),
         device: torch.device,
         split_name: str = "val",
         output_sink: OutputSink | None = None,
         training_step: int | None = None,
     ) -> EvaluationResult:
-        metric_names = [binding.name for binding in metric_bindings]
-        if not metric_names:
-            raise ValueError("evaluate needs at least one MetricBinding")
-        if len(set(metric_names)) != len(metric_names):
-            raise ValueError(f"metric names must be unique, got {metric_names}")
-        graph.check_reads(
-            name for binding in metric_bindings for name in binding.inputs
-        )
+        if not metric_bindings and not curve_bindings:
+            raise ValueError(
+                "evaluate needs at least one MetricBinding or CurveBinding"
+            )
+        bindings = [*metric_bindings, *curve_bindings]
+        names = [binding.name for binding in bindings]
+        if len(set(names)) != len(names):
+            raise ValueError(f"metric and curve names must be unique, got {names}")
+        graph.check_reads(name for binding in bindings for name in binding.inputs)
 
         for binding in metric_bindings:
             binding.metric.reset()
             binding.metric.to(device)
+        for binding in curve_bindings:
+            binding.reset()
 
         # Save model training state
         was_training = graph.training
@@ -58,7 +65,7 @@ class Evaluator:
                 for batch in data_loader:
                     batch = to_device(batch, device)
                     node_outputs = graph(batch)
-                    for binding in metric_bindings:
+                    for binding in bindings:
                         binding.update(batch, node_outputs)
                     batch_count += 1
         finally:
@@ -70,6 +77,7 @@ class Evaluator:
         metric_values = {
             binding.name: compute_single_value(binding) for binding in metric_bindings
         }
+        curves = {binding.name: binding.compute() for binding in curve_bindings}
 
         # Write to Output Sinks
         if output_sink is not None:
@@ -82,7 +90,16 @@ class Evaluator:
                         step=training_step,
                     )
                 )
-        return EvaluationResult(metric_values)
+            for curve_name, table in curves.items():
+                output_sink.write(
+                    RunEvent(
+                        "table",
+                        f"eval/{split_name}/{curve_name}",
+                        table,
+                        step=training_step,
+                    )
+                )
+        return EvaluationResult(metric_values, curves)
 
 
 def compute_single_value(binding: MetricBinding) -> float:

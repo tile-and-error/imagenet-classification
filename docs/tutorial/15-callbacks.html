@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15. Callbacks</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><span><a href="../index.html">Docs</a> / <a href="index.html">lwfm tutorial</a></span><span data-slide-counter>15</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>15. Callbacks: changing training without changing the loop</h1>
+
+<p class="lead">A <code class="l">Callback</code> is an object whose <code>on_*</code> methods the trainer calls at fixed points. Each one receives the <code class="l">TrainingState</code>: the graph, the optimizer, the step counters and the latest metrics.</p>
+<pre class="code"><code class="language-python">from lwfm.training import Callback                         # lwfm
+from lwfm.training.callbacks import EarlyStopping          # lwfm: a ready-made callback
+
+class PrintValidation(Callback):
+    def on_validation_end(self, state, metrics):           # override only the hooks you need
+        top1 = metrics[&quot;top1&quot;]
+        print(f&quot;epoch {state.epoch}, step {state.global_step}: top1 = {top1:.3f}&quot;)
+
+result = Trainer(device=&quot;cpu&quot;, max_epochs=50).fit(
+    graph, train_loader, loss, optimizer,
+    val_loader=val_loader, metrics=metrics,
+    # lwfm: stop once top1 has failed to improve for 2 validations in a row
+    callbacks=[
+        PrintValidation(),
+        EarlyStopping(&quot;top1&quot;, max_validations_without_improvement=2),
+    ],
+)
+result.stop_reason, result.epochs_completed</code></pre>
+<pre class="output">epoch 1, step 20: top1 = 0.900
+epoch 2, step 40: top1 = 0.887
+epoch 3, step 60: top1 = 0.887
+('stopped', 3)                            # stopped long before 50 epochs</pre>
+
+<h3>When each hook runs</h3>
+<p>Each box is a loop, or a step that only sometimes happens. The hooks inside it run top to bottom, and a nested box runs at that point in its parent's list.</p>
+<div class="hooks">
+  <div class="box fit"><div class="box-title">Fit <span>one call to <code>trainer.fit(...)</code></span></div>
+  <ul>
+    <li class="hook"><code>on_fit_start</code></li>
+    <li><div class="box epoch"><div class="box-title">Epoch <span>repeats until <code>max_epochs</code>, <code>max_steps</code> or <code>state.should_stop</code></span></div>
+    <ul>
+      <li class="hook"><code>on_epoch_start</code></li>
+      <li><div class="box batch"><div class="box-title">Batch <span>repeats for each batch of <code>train_loader</code></span></div>
+      <ul>
+        <li class="hook"><code>on_step_start(batch)</code></li>
+        <li class="hook"><code>on_after_backward</code></li>
+        <li><div class="box optimizer"><div class="box-title">Optimizer step <span>only at an accumulation boundary</span></div>
+        <ul><li class="hook"><code>on_after_optimizer_step</code></li></ul></div></li>
+        <li class="hook"><code>on_step_end(output)</code></li>
+        <li><div class="box validation"><div class="box-title">Validation <span>at a boundary, every <code>val_every_n_steps</code> (if set)</span></div>
+        <ul><li class="hook"><code>on_validation_end(metrics)</code></li></ul></div></li>
+      </ul></div></li>
+      <li class="hook"><code>on_epoch_end</code> <span class="note">skipped if training stopped mid-epoch</span></li>
+      <li><div class="box validation"><div class="box-title">Validation <span>after the epoch, if <code>val_every_n_steps</code> is unset</span></div>
+      <ul><li class="hook"><code>on_validation_end(metrics)</code></li></ul></div></li>
+    </ul></div></li>
+    <li><div class="box validation"><div class="box-title">Final validation <span>unless the last step was just validated</span></div>
+    <ul><li class="hook"><code>on_validation_end(metrics)</code></li></ul></div></li>
+    <li class="hook"><code>on_fit_end(result)</code> <span class="note">also on Ctrl-C or a crash, before re-raising</span></li>
+  </ul></div>
+</div>
+<ul class="muted">
+  <li>An <em>accumulation boundary</em> is every <code>accumulate_grad_batches</code>-th batch, and the last batch of each epoch. With the default of 1, every batch is one.</li>
+  <li><code>on_after_backward</code> and <code>on_after_optimizer_step</code> come from the helpers in <code class="l">lwfm.training.steps</code>, so they fire only if <code>step_fn</code> uses them (<code>default_step</code> does).</li>
+  <li>Validation runs only when <code>val_loader</code> and <code>metrics</code> are given. Within one hook, callbacks run in the order they were passed to <code>fit</code>.</li>
+</ul>
+<table>
+  <tr><th>Hook</th><th>Runs</th><th>Typical use</th></tr>
+  <tr><td><code>on_fit_start</code> / <code>on_fit_end</code></td><td>once, before the first batch / at the end (also after Ctrl-C)</td><td>check settings; save the final state</td></tr>
+  <tr><td><code>on_epoch_start</code> / <code>on_epoch_end</code></td><td>around each full pass over the data</td><td>per-epoch schedules and summaries</td></tr>
+  <tr><td><code>on_step_start</code> / <code>on_step_end</code></td><td>around each batch</td><td>per-step schedules, e.g. a loss weight</td></tr>
+  <tr><td><code>on_after_backward</code></td><td>gradients exist, before the optimizer step</td><td>inspecting gradients</td></tr>
+  <tr><td><code>on_after_optimizer_step</code></td><td>the weights have just changed</td><td>an EMA teacher (self-distillation)</td></tr>
+  <tr><td><code>on_validation_end</code></td><td>after each validation, with its metrics</td><td>early stopping, saving the best model</td></tr>
+</table>
+
+<h3>Ready-made callbacks, in <code>lwfm.training.callbacks</code></h3>
+<table>
+  <tr><td><code class="l">EarlyStopping(monitored_metric, goal, max_validations_without_improvement)</code></td><td>stops when a metric stops improving</td></tr>
+  <tr><td><code class="l">ModelCheckpoint(run_dir, node, monitored_metric)</code></td><td>saves the best and final weights, and the full state (slide 17)</td></tr>
+  <tr><td><code class="l">LossWeightSchedule(binding_name, weight_at_step)</code></td><td>changes a loss weight every step (slide 16)</td></tr>
+  <tr><td><code class="l">RestoreBestWeights(node, monitored_metric)</code></td><td>keeps a node's weights from its best validation in memory, and loads them back when fit ends</td></tr>
+  <tr><td><code class="l">EMAUpdate(student_name, teacher_name, momentum)</code></td><td>moves a teacher's weights towards the student's, after every optimizer step</td></tr>
+</table>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li>Nothing new. <code>state.optimizer</code> and <code>state.graph</code> are the same <code class="t">torch.optim</code> optimizer and <code class="t">nn.Module</code> you passed to <code>fit</code>.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">Callback</code> — every hook does nothing by default.</li><li><code class="l">TrainingState</code> — <code>graph</code>, <code>loss</code>, <code>optimizer</code>, <code>global_step</code>, <code>epoch</code>, <code>last_val_metrics</code>, ...</li><li><code>state.should_stop = True</code> — ends the run cleanly; <code>stop_reason</code> becomes <code>"stopped"</code>.</li></ul></div></div>
+<div class="why"><strong>Why?</strong> Each technique that acts at a point in time (a schedule, early stopping, an EMA teacher) is a small object, not an edit to the loop, so techniques combine by listing them. Because hooks default to doing nothing, a misspelled one such as <code>on_validation_ended</code> would never run, so <code>fit</code> refuses it before training starts. To change what one step <em>computes</em> (e.g. two forward passes per step), replace the step itself with <code>Trainer(step_fn=...)</code> instead.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="14-training-loop.html">← 14. Inside fit</a><a rel="next" href="16-distillation.html">16. Distillation →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

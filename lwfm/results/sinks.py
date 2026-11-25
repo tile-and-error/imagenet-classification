@@ -1,13 +1,26 @@
+import csv
+import io
 import json
 import os
 import sys
 from abc import ABC, abstractmethod
-from dataclasses import asdict, is_dataclass
+from collections.abc import Iterable
+from dataclasses import asdict, fields, is_dataclass
 from pathlib import Path
-from typing import TextIO, cast
+from typing import Literal, TextIO, cast, get_args
+
+import yaml
 
 from lwfm.results.events import RunEvent, RunStatus, utc_now
 from lwfm.results.manifest import environment
+
+# The format of every file in a run directory
+type FileFormat = Literal["json", "yaml", "csv"]
+FILE_FORMATS: tuple[str, ...] = get_args(FileFormat.__value__)
+# The events file is appended to, so JSON uses JSON Lines: one object per line
+EVENTS_FILE_NAMES = {"json": "events.jsonl", "yaml": "events.yaml", "csv": "events.csv"}
+# The columns of events.csv, in RunEvent's field order
+EVENT_FIELDS = tuple(field.name for field in fields(RunEvent))
 
 
 class SinkError(RuntimeError):
@@ -43,55 +56,136 @@ def to_json(event: RunEvent) -> str:
         raise TypeError(f"event {event.name!r}: {error}") from None
 
 
-def write_json_atomic(target_path: Path, json_data: object) -> None:
-    """Write JSON to a file safely. It uses a temp directory and then OS.replace
-    to make sure readers never see a half written file.
-    """
+def write_text_atomic(target_path: Path, text: str) -> None:
+    """Writes `text` to a temporary file, then renames it over `target_path`."""
     temp_path = target_path.with_name(target_path.name + ".tmp")
-    temp_path.write_text(json.dumps(json_data, indent=2, default=_json_default) + "\n")
+    temp_path.write_text(text, encoding="utf-8", newline="")
     os.replace(temp_path, target_path)  # readers never see a half-written file
+
+
+def summarise(value: object) -> str:
+    """A table on one line, with lists shown as their length, e.g.
+    `Lines(columns: {epoch: 100 values, top1: 100 values})`."""
+    if is_dataclass(value) and not isinstance(value, type):
+        parts = (
+            f"{f.name}: {summarise(getattr(value, f.name))}" for f in fields(value)
+        )
+        return f"{type(value).__name__}({', '.join(parts)})"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{k}: {summarise(v)}" for k, v in value.items()) + "}"
+    if isinstance(value, list | tuple):
+        return f"{len(value)} values"
+    return f"{value:.4g}" if isinstance(value, float) else str(value)
+
+
+def csv_row(cells: Iterable[object]) -> str:
+    """One CSV line, quoted as needed (e.g. a traceback spanning several lines)."""
+    buffer = io.StringIO()
+    csv.writer(buffer, lineterminator="\n").writerow(cells)
+    return buffer.getvalue()
+
+
+def csv_cell(value: object) -> object:
+    # Numbers and strings as they are; nested values (a table's rows, a dataclass)
+    # as JSON text; None as an empty cell
+    if value is None:
+        return ""
+    if isinstance(value, dict | list):
+        return json.dumps(value)
+    return value
+
+
+def format_event(event: RunEvent, file_format: FileFormat) -> str:
+    """The text appended to the events file for one event."""
+    json_line = to_json(event)  # also checks that the value is serialisable
+    if file_format == "json":
+        return json_line + "\n"
+    record = json.loads(json_line)  # plain types: dataclasses and paths converted
+    if file_format == "yaml":
+        # One list item, so the whole file is a YAML list of events
+        return yaml.safe_dump([record], sort_keys=False)
+    return csv_row(csv_cell(record[field]) for field in EVENT_FIELDS)
+
+
+def flatten(record: dict[str, object], prefix: str = "") -> dict[str, object]:
+    """Nested dicts as dotted keys: {"environment": {"torch": "2.9"}} becomes
+    {"environment.torch": "2.9"}."""
+    flat: dict[str, object] = {}
+    for key, value in record.items():
+        if isinstance(value, dict):
+            flat |= flatten(value, f"{prefix}{key}.")
+        else:
+            flat[f"{prefix}{key}"] = value
+    return flat
+
+
+def format_record(
+    record: dict[str, object], file_format: FileFormat, key_header: str = "key"
+) -> str:
+    """The text of a whole-file record (manifest, status, summary). CSV has no
+    nesting, so it gets one `key,value` row per flattened entry."""
+    json_text = json.dumps(record, indent=2, default=_json_default)
+    if file_format == "json":
+        return json_text + "\n"
+    plain_record = json.loads(json_text)  # dataclasses and paths converted
+    if file_format == "yaml":
+        return yaml.safe_dump(plain_record, sort_keys=False)
+    rows = (csv_row([k, csv_cell(v)]) for k, v in flatten(plain_record).items())
+    return csv_row([key_header, "value"]) + "".join(rows)
 
 
 class LocalFileSink(OutputSink):
     """Writes a run directory: the local, canonical record of a run.
 
-    On creation: `manifest.json` (the given manifest plus `environment()`) and
-    `status.json` = running. Each event is appended to `events.jsonl` and flushed
-    at once, so a crashed run keeps its data. Status events rewrite `status.json`,
-    with the traceback after a failure. On close: `summary.json`, the last value
-    of every scalar. Refuses a directory that already holds a run.
+    On creation: the manifest (the given manifest plus `environment()`) and the
+    status, `running`. Each event is appended to the events file and flushed at
+    once, so a crashed run keeps its data. Status events rewrite the status file,
+    with the traceback after a failure. On close: the summary, the last value of
+    every scalar. Refuses a directory that already holds a run.
+
+    `file_format` sets the format of every file: `"json"` writes `manifest.json`,
+    `status.json`, `events.jsonl` (one object per line) and `summary.json`;
+    `"yaml"` writes the same names as `.yaml`, with the events as a YAML list;
+    `"csv"` writes them as `.csv`: one row per event (columns as in `RunEvent`),
+    and `key,value` rows for the others, nested keys dotted (`environment.torch`)
+    and the summary's header `name,value`.
     """
 
-    def __init__(self, run_dir: str | Path, manifest_fields: dict | None = None):
+    def __init__(
+        self,
+        run_dir: str | Path,
+        manifest_fields: dict | None = None,
+        file_format: FileFormat = "json",
+    ):
+        if file_format not in FILE_FORMATS:
+            raise ValueError(f"file_format must be one of {FILE_FORMATS}")
         self.run_dir = Path(run_dir)
-        events_path = self.run_dir / "events.jsonl"
-        if events_path.exists():
+        self.file_format: FileFormat = file_format
+        # A run of any format claims the directory
+        if any((self.run_dir / name).exists() for name in EVENTS_FILE_NAMES.values()):
             raise FileExistsError(f"{self.run_dir} already holds a run")
-        # Create the `run_dir` directory, or do nothing otherwise.
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
-        # Open in exclusive-create mode to ensure anything else claiming the directory
-        # isn't interrupted
+        # Exclusive-create mode: if another sink claimed the directory since the
+        # check above, fail rather than write into its run. newline="" keeps line
+        # endings as written, which CSV needs for quoted multi-line cells.
+        events_path = self.run_dir / EVENTS_FILE_NAMES[file_format]
         try:
-            self._events_file = (self.run_dir / "events.jsonl").open(
-                "x", encoding="utf-8"
-            )
+            self._events_file = events_path.open("x", encoding="utf-8", newline="")
         except FileExistsError:
             raise FileExistsError(f"{self.run_dir} already holds a run") from None
-        write_json_atomic(
-            self.run_dir / "manifest.json",
-            {**(manifest_fields or {}), "environment": environment()},
+        if file_format == "csv":
+            self._append(csv_row(EVENT_FIELDS))
+        self._write_record(
+            "manifest", {**(manifest_fields or {}), "environment": environment()}
         )
         self._failure_traceback: str | None = None
         self._write_status("running")
         self._last_scalar_values: dict[str, object] = {}
-        self._events_file = events_path.open("a", encoding="utf-8")
 
     def write(self, event: RunEvent) -> None:
         """Write a RunEvent to the sink"""
-        json_line = to_json(event)  # fails before anything is written
-        self._events_file.write(json_line + "\n")
-        self._events_file.flush()
+        self._append(format_event(event, self.file_format))  # fails before writing
         if event.kind == "scalar":
             self._last_scalar_values[event.name] = event.value
         elif event.kind == "message" and event.name == "traceback":
@@ -102,18 +196,32 @@ class LocalFileSink(OutputSink):
     def close(self) -> None:
         if self._events_file.closed:
             return
-        write_json_atomic(self.run_dir / "summary.json", self._last_scalar_values)
+        self._write_record("summary", self._last_scalar_values, key_header="name")
         self._events_file.close()
+
+    def _append(self, text: str) -> None:
+        self._events_file.write(text)
+        self._events_file.flush()
 
     def _write_status(self, status: RunStatus) -> None:
         status_record: dict[str, object] = {"status": status, "updated_utc": utc_now()}
         if self._failure_traceback is not None:
             status_record["traceback"] = self._failure_traceback
-        write_json_atomic(self.run_dir / "status.json", status_record)
+        self._write_record("status", status_record)
+
+    def _write_record(
+        self, stem: str, record: dict[str, object], key_header: str = "key"
+    ) -> None:
+        # Written to a temporary file, then renamed: never seen half-written
+        write_text_atomic(
+            self.run_dir / f"{stem}.{self.file_format}",
+            format_record(record, self.file_format, key_header),
+        )
 
 
 class ConsoleSink(OutputSink):
     """Prints one line per event, e.g. `[fit step 10] train/loss/total = 0.4321`.
+    A table is summarised (see `summarise`) unless its type defines its own str.
 
     Writes to a stream (stdout by default) rather than through `logging`: it is
     the console destination, so logging configuration shouldn't hide it.
@@ -131,9 +239,12 @@ class ConsoleSink(OutputSink):
             )
             if part
         )
-        shown_value = (
-            f"{event.value:.4g}" if isinstance(event.value, float) else event.value
-        )
+        if isinstance(event.value, float):
+            shown_value = f"{event.value:.4g}"
+        elif event.kind == "table" and type(event.value).__str__ is object.__str__:
+            shown_value = summarise(event.value)
+        else:
+            shown_value = event.value
         prefix = f"[{stage_and_step}] " if stage_and_step else ""
         self.output_stream.write(f"{prefix}{event.name} = {shown_value}\n")
         self.output_stream.flush()

@@ -19,7 +19,7 @@
 </head>
 <body>
 <main>
-<header class="top"><a href="index.html">lwfm tutorial</a><span>10 / 12</span>
+<header class="top"><span><a href="../index.html">Docs</a> / <a href="index.html">lwfm tutorial</a></span><span data-slide-counter>10</span>
 <span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
 <h1>10. Where to extend</h1>
 
@@ -31,7 +31,11 @@
   <tr><td>a second model, projector, selector</td><td>any <code class="t">nn.Module</code></td><td>one more node in the <code class="l">ExecutionGraph</code></td><td class="ok">works now</td></tr>
   <tr><td>a loss</td><td>a function or <code class="t">nn.Module</code> returning one number</td><td><code class="l">LossBinding</code> in the <code class="l">LossComposer</code></td><td class="ok">works now</td></tr>
   <tr><td>a metric</td><td>a <code class="t">torchmetrics.Metric</code></td><td><code class="l">MetricBinding</code> in the <code class="l">Evaluator</code>'s list</td><td class="ok">works now</td></tr>
+  <tr><td>a curve or other per-split plot</td><td>a function taking one tensor per name read and returning a <code class="l">Curve</code>, e.g. <code class="l">ROCCurve.from_scores(scores, labels)</code></td><td><code class="l">CurveBinding</code> in <code>curves=[...]</code></td><td class="ok">works now</td></tr>
+  <tr><td>a plot of your own</td><td>a <code class="l">Curve</code>: a dataclass with a <code>draw(axes)</code> method, like <code class="l">ROCCurve</code></td><td>built by a <code class="l">CurveBinding</code>; <code class="l">PlotSink</code> calls <code>draw</code></td><td class="ok">works now</td></tr>
   <tr><td>a results destination</td><td>a subclass of <code class="l">OutputSink</code></td><td>an argument to <code class="l">OutputRouter</code></td><td class="ok">works now</td></tr>
+  <tr><td>something that happens during training (a schedule, early stopping)</td><td>a subclass of <code class="l">Callback</code></td><td><code>callbacks=[...]</code> in <code class="l">Trainer.fit</code> (slide 15)</td><td class="ok">works now</td></tr>
+  <tr><td>a different training step</td><td>a function <code>(state, batch) → StepOutput</code></td><td><code class="l">Trainer(step_fn=...)</code></td><td class="ok">works now</td></tr>
   <tr><td>a dataset</td><td>a subclass of <code class="l">DataModule</code></td><td>config</td><td class="todo">planned</td></tr>
   <tr><td>a whole step of a run (prune, export)</td><td>a subclass of <code class="l">Stage</code></td><td>a <code class="l">Recipe</code></td><td class="todo">planned</td></tr>
   <tr><td>a cost measurement</td><td>a subclass of <code class="l">Benchmark</code></td><td>the benchmark stage</td><td class="todo">planned</td></tr>

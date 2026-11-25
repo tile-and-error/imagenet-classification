@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>14. Inside fit: steps, epochs, validation</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="assets/vendor/hljs-github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="assets/vendor/hljs-github-dark.min.css">
+<script src="assets/vendor/hljs-highlight.min.js"></script>
+<script src="assets/vendor/hljs-python.min.js"></script>
+<script src="assets/vendor/hljs-bash.min.js"></script>
+<script src="assets/vendor/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default", securityLevel: "strict" });
+</script>
+<script src="assets/nav.js" defer></script>
+</head>
+<body>
+<main>
+<header class="top"><span><a href="../index.html">Docs</a> / <a href="index.html">lwfm tutorial</a></span><span data-slide-counter>14</span>
+<span><code class="t">torch</code> PyTorch &nbsp; <code class="l">lwfm</code> ours</span></header>
+<h1>14. Inside fit: steps, epochs, validation</h1>
+
+<p class="lead"><code>fit</code> repeats one <strong>step</strong> per batch. Around the steps it counts, schedules the learning rate, validates, logs, and decides when to stop.</p>
+<pre class="mermaid">flowchart TD
+    A(["fit(...)"]) --> C["checks before any batch&lt;br/&gt;(slide 18)"]
+    C --> E["start an epoch: graph.train()"]
+    E --> B["next batch: to_device"]
+    B --> S["one step: forward, loss, backward, optimizer step"]
+    S --> K["global_step += 1&lt;br/&gt;scheduler, if per step · log every N steps"]
+    K --> M{"more batches?"}
+    M -- yes --> B
+    M -- no --> V["epoch += 1&lt;br/&gt;validate with the Evaluator (slide 7)"]
+    V --> X{"stop?&lt;br/&gt;max_epochs · max_steps · a callback"}
+    X -- no --> E
+    X -- yes --> R(["TrainingResult"])</pre>
+<table>
+  <tr><th>Term</th><th>Means</th></tr>
+  <tr><td>step (<code>global_step</code>)</td><td>one optimizer update. <code>max_steps</code> and <code>log_every_n_steps</code> count these.</td></tr>
+  <tr><td>epoch</td><td>one full pass over <code>train_loader</code>. It only counts once the loader is used up.</td></tr>
+  <tr><td>validation</td><td>after every epoch by default, or every <code>val_every_n_steps</code>. Every run ends on a validation result.</td></tr>
+</table>
+
+<h3>Validation, logging and a learning-rate schedule</h3>
+<pre class="code"><code class="language-python">metrics = [MetricBinding(&quot;top1&quot;, MulticlassAccuracy(K, average=&quot;micro&quot;), CE_READS)]  # lwfm + torchmetrics
+epochs = 3
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(      # torch: lr falls to 0 ...
+    optimizer, T_max=epochs * len(train_loader)              # ... over every optimizer step of the run
+)
+trainer = Trainer(device=&quot;cpu&quot;, max_epochs=epochs, log_every_n_steps=20)
+result = trainer.fit(
+    graph, train_loader, loss, optimizer,
+    val_loader=val_loader, metrics=metrics,                  # lwfm: validate after every epoch
+    scheduler=scheduler, scheduler_interval=&quot;step&quot;,          # lwfm: required with a scheduler
+    output_sink=ConsoleSink(),                               # lwfm: print every event (slide 9)
+)
+result.best(&quot;top1&quot;)                                          # lwfm: the best validation, and its step</code></pre>
+<pre class="output">[step 0] trainer/settings = {'device': 'cpu', 'precision': 'fp32', 'max_epochs': 3, ...}   # once (slide 18)
+[step 20] train/loss/ce = 0.4182
+[step 20] train/loss/total = 0.4182
+[step 20] train/lr = 0.075
+[step 20] train/epoch_seconds = 0.003355
+[step 20] eval/val/top1 = 0.9
+...                                       # the same five lines at steps 40 and 60
+{'top1': 0.8999999761581421, 'step': 20}</pre>
+<div class="parts"><div class="part t"><h4>From PyTorch</h4><ul><li><code class="t">CosineAnnealingLR</code> — any <code class="t">torch.optim.lr_scheduler</code> works; the trainer only calls <code>scheduler.step()</code>.</li><li><code class="t">MulticlassAccuracy</code> — any torchmetrics metric, bound to names as on slide 6.</li></ul></div><div class="part l"><h4>From lwfm (ours)</h4><ul><li><code class="l">val_loader</code> + <code class="l">metrics</code> — always passed together; validation goes through the same <code class="l">Evaluator</code> as slide 7.</li><li><code class="l">curves=[CurveBinding(...)]</code> — optional: a ROC curve, confusion matrix or other table, built from the whole validation set at the last validation, or also every <code>curves_every_n_validations</code>-th one, and written as <code>eval/val/&lt;name&gt;</code> (slide 7).</li><li><code class="l">scheduler_interval</code> — <code>"step"</code> (after each optimizer step) or <code>"epoch"</code>. <code class="t">ReduceLROnPlateau</code> needs a metric, so it is stepped from a callback's <code>on_validation_end</code>.</li><li><code class="l">output_sink</code> — receives <code>trainer/settings</code> once, then <code>train/loss/*</code>, <code>train/lr</code>, <code>train/epoch_seconds</code> and <code>eval/val/*</code>. With no sink, nothing is written.</li></ul></div></div>
+<div class="why"><strong>Why must scheduler_interval be given?</strong> A schedule stepped per batch and the same schedule stepped per epoch differ by a factor of the epoch length. A default would silently change results when code is copied from elsewhere, so you always say which one you mean.</div>
+
+</main>
+<nav class="pager"><a rel="prev" href="13-trainer.html">← 13. The Trainer</a><a rel="next" href="15-callbacks.html">15. Callbacks →</a></nav>
+<script>hljs.highlightAll();</script>
+</body>
+</html>
