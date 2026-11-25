@@ -1,4 +1,0 @@
-id: "gecko_default"
-partition: "gecko"
-cpus-per-task: 16
-gpus: 1
