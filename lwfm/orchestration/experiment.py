@@ -17,6 +17,7 @@ from lwfm.core.losses import LossComposer
 from lwfm.data.factory import build_data_module
 from lwfm.core.lossfactory import build_loss_composer
 from lwfm.evaluation.factory import build_metric_binding
+from lwfm.results.events import RunEvent
 
 class Experiment:
     def __init__(
@@ -60,7 +61,28 @@ class Experiment:
         self.recipe = build_recipe(config.recipe)
 
     def run(self):
-        self.recipe.execute(self.context)
+        try:
+            self.recipe.execute(self.context)
+            status = "completed"
+
+        except KeyboardInterrupt:
+            status = "interrupted"
+            raise
+
+        except Exception:
+            status = "failed"
+            raise
+
+        finally:
+            self.context.output_router.write(
+                RunEvent(
+                    kind="status",
+                    name="experiment/status",
+                    value=status,
+                    stage=None,
+                    step=None,
+                )
+            )
 
     def __enter__(self):
         return self
