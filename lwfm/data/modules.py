@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
+
 from torch.utils.data import DataLoader
 
-class DataModule(ABC):
 
+class DataModule(ABC):
     @abstractmethod
     def prepare_data(self) -> None:
         """Check the data is downloaded"""
@@ -14,14 +15,10 @@ class DataModule(ABC):
         ...
 
     @abstractmethod
-    def train_dataloader(self) -> DataLoader:
-        ...
+    def train_dataloader(self) -> DataLoader: ...
 
     @abstractmethod
-    def val_dataloader(self) -> DataLoader:
-        ...
+    def val_dataloader(self) -> DataLoader: ...
 
     @abstractmethod
-    def test_dataloader(self) -> DataLoader:
-        ...
-
+    def test_dataloader(self) -> DataLoader: ...

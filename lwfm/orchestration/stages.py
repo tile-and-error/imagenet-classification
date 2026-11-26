@@ -1,14 +1,13 @@
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-import os
+
 import torch
 
 from lwfm.orchestration.runcontext import RunContext
-from lwfm.core.graph import ExecutionGraph
 from lwfm.training.optimizer import build_optimizer, build_scheduler
-from lwfm.results.events import RunEvent
-from lwfm.evaluation.factory import build_metric_binding
+
 
 @dataclass
 class StageResult:
@@ -23,6 +22,7 @@ class Stage(ABC):
     @abstractmethod
     def execute(self, ctx: RunContext) -> StageResult: ...
 
+
 class FitStage(Stage):
     name = "fit"
 
@@ -35,31 +35,38 @@ class FitStage(Stage):
         loss = ctx.loss_composer
         optimizer = build_optimizer(
             (p for p in graph.parameters() if p.requires_grad),
-            ctx.config.training["optimizer"]
+            ctx.config.training["optimizer"],
         )
 
         extra_config = {}
 
         if "scheduler" in ctx.config.training:
+            scheduler_config = ctx.config.training["scheduler"]
+
             if "max_epochs" not in ctx.config.training:
                 raise ValueError("Max Epochs must be defined to use scheduler")
-            if "interval" not in ctx.config.training["scheduler"]:
+            if "interval" not in scheduler_config:
                 raise ValueError("Scheduler Interval must be defined to use scheduler")
-            
-            scheduler = build_scheduler(ctx.config.training["scheduler"], optimizer, ctx.config.training["max_epochs"], len(train_loader))
+
+            scheduler = build_scheduler(
+                scheduler_config,
+                optimizer,
+                ctx.config.training["max_epochs"],
+                len(train_loader),
+            )
 
             extra_config["scheduler"] = scheduler
-            extra_config["scheduler_interval"] = ctx.config.training["scheduler"]["interval"]
+            extra_config["scheduler_interval"] = scheduler_config["interval"]
 
         result = ctx.trainer.fit(
-            graph, 
-            train_loader, 
-            loss, 
+            graph,
+            train_loader,
+            loss,
             optimizer,
             val_loader=ctx.data_module.val_dataloader(),
-            metrics=ctx.metric_bindings, # metrics=build_metric_binding() TODO: Which set of metrics??
+            metrics=ctx.metric_bindings,
             output_sink=ctx.output_router,
-            **extra_config
+            **extra_config,
         )
         # Save Checkpoint
         save_checkpoint(
@@ -68,19 +75,16 @@ class FitStage(Stage):
             optimizer,
             result.epochs_completed,
             result.global_step,
-            ctx.config.deployment["node"]
+            ctx.config.deployment["node"],
         )
         # Record Output
         artefacts = {
             "fit": str(ctx.output_dir / "artifacts/fit_last.pt"),
-            "model": str(ctx.output_dir / "artifacts/model_weights.pt")
+            "model": str(ctx.output_dir / "artifacts/model_weights.pt"),
         }
 
-        return StageResult(
-            artefacts,
-            result,
-            "completed"
-        )
+        return StageResult(artefacts, result, "completed")
+
 
 class EvaluateStage(Stage):
     name = "evaluate"
@@ -102,9 +106,9 @@ class EvaluateStage(Stage):
             graph,
             loader,
             ctx.metric_bindings,
-            device = ctx.config.device,
+            device=ctx.config.device,
             output_sink=ctx.output_router,
-            split_name=self.split
+            split_name=self.split,
         )
 
         measurements = {
@@ -112,35 +116,24 @@ class EvaluateStage(Stage):
             for name, value in result.metric_values.items()
         }
 
-        return StageResult(
-            {},
-            measurements,
-            "completed"
-        )
+        return StageResult({}, measurements, "completed")
+
 
 class BenchmarkStage(Stage):
     name = "benchmark"
 
     def execute(self, ctx: RunContext) -> StageResult:
-        return StageResult(
-            {},
-            {},
-            "completed"
-        )
+        return StageResult({}, {}, "completed")
+
 
 def save_checkpoint(
-        path: Path,
-        graph,
-        optimizer,
-        epoch: int,
-        global_step: int,
-        deployable_name
+    path: Path, graph, optimizer, epoch: int, global_step: int, deployable_name
 ):
     checkpoint = {
         "model_state_dict": graph.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "epoch": epoch,
-        "global_step": global_step
+        "global_step": global_step,
     }
 
     fit_path = path / "artifacts/fit_last.pt"

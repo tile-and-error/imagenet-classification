@@ -1,11 +1,11 @@
 from lwfm.data.fakeclassification import FakeClassificationDataModule
 
+
 def build_data_module(config, seed):
     """Convert the YAML data config into an instance of a DataModule"""
     data_registry = {
         "fake_classification": FakeClassificationDataModule,
     }
-
 
     data_type = config["type"]
 
@@ -20,5 +20,5 @@ def build_data_module(config, seed):
         config["image_size"],
         config["batch_size"],
         config["num_workers"],
-        **config.get("kwargs", {})
+        **config.get("kwargs", {}),
     )

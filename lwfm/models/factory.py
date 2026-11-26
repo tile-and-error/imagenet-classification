@@ -1,4 +1,4 @@
-from typing import Any, OrderedDict
+from typing import Any
 
 import torch.nn as nn
 import torchvision.models
@@ -6,30 +6,25 @@ import torchvision.models
 from lwfm.core.graph import ModelNode
 from lwfm.models.preprocessing import build_preprocessing
 
+
 def build_torchvision_model(config: dict[str, Any]) -> ModelNode:
-    model_registry = {
-        "resnet18": torchvision.models.resnet18
-    }
+    model_registry = {"resnet18": torchvision.models.resnet18}
 
     model_name = config["name"]
     num_classes = config["num_classes"]
 
     if model_name not in model_registry:
-        raise ValueError(
-            f"Unknown model: {config['name']}"
-        )
+        raise ValueError(f"Unknown model: {config['name']}")
 
     base_model = model_registry[model_name](
-        weights=None,
-        num_classes = num_classes,
-        **config.get("kwargs", {})
+        weights=None, num_classes=num_classes, **config.get("kwargs", {})
     )
 
     return base_model
 
-MODEL_BUILDERS = {
-    "torchvision": build_torchvision_model
-}
+
+MODEL_BUILDERS = {"torchvision": build_torchvision_model}
+
 
 def build_model(config: dict[str, Any]) -> ModelNode:
     type = config["type"]
@@ -45,15 +40,13 @@ def build_model(config: dict[str, Any]) -> ModelNode:
         model = base_model
     else:
         model_with_preprocessing = build_preprocessing(preprocessing) + [base_model]
-        model = nn.Sequential(
-            *model_with_preprocessing
-        )
+        model = nn.Sequential(*model_with_preprocessing)
 
     model_node = ModelNode(
         name=config["node"],
-        module = model,
-        inputs = config["inputs"],
-        outputs = config["outputs"]
+        module=model,
+        inputs=config["inputs"],
+        outputs=config["outputs"],
     )
 
     return model_node

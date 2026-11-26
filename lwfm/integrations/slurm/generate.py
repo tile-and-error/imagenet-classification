@@ -1,8 +1,8 @@
 import sys
-import yaml
-
-from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
+
+import yaml
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 # Map defaults to their standard templates
 NAME_MAP = {
@@ -11,20 +11,17 @@ NAME_MAP = {
     "gpu": "gpu",
     "gecko": "gpu",
     "eagle": "gpu",
-    "falcon": "gpu"
+    "falcon": "gpu",
 }
 
 # Get Jinja Templates
-env = Environment(
-    loader=FileSystemLoader("templates/"),
-    autoescape=select_autoescape()
-)
+env = Environment(loader=FileSystemLoader("templates/"), autoescape=select_autoescape())
 
 # Load script arguments
 system = "dcs"
 largepath = sys.argv[1]
 type = sys.argv[2]
-template_name = sys.argv[3] #"cpu"
+template_name = sys.argv[3]  # "cpu"
 
 username = sys.argv[4]
 timestamp = sys.argv[5]
@@ -44,7 +41,7 @@ if type == "default":
     yaml_file = Path(__file__).resolve().parent / yaml_file_name
     yaml_text = yaml_file.read_text(encoding="utf-8")
     context_data = yaml.safe_load(yaml_text) or {}
-    
+
     context_data["experiment"] = experiment_file
 
 else:
@@ -55,7 +52,7 @@ else:
     context_data = yaml.safe_load(yaml_text) or {}
 
 context_data["largepath"] = largepath
-context_data["id"] = f"{context_data["id"]}_{username}_{timestamp}"
+context_data["id"] = f"{context_data['id']}_{username}_{timestamp}"
 
 # Create new sbatch file
 output = template.render(**context_data)

@@ -1,6 +1,8 @@
 # Config loading
 from dataclasses import dataclass
+
 from pydantic import BaseModel
+
 
 @dataclass
 class ExperimentConfig(BaseModel):
