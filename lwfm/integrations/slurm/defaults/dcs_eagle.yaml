@@ -1,4 +1,4 @@
 id: "eagle_default"
 partition: "eagle"
-cpus-per-task: 6
+cpus_per_task: 6
 gpus: 1

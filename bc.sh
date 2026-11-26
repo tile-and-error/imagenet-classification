@@ -12,7 +12,7 @@
 USER=$(whoami)
 LARGEPATH="/"
 DEVICE=$2
-TIMESTAMP=$(ts '%Y%m%d-%H%M%S')
+TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
 SETUP=$3
 
 EXPERIMENT="$LARGEPATH/configs/experiments/$USER/$1"
@@ -27,9 +27,14 @@ if [[ $# > 3 ]]; then
     exit 1
 fi
 
-cp $1 $EXPERIMENT
+# Create the destination if it doesn't exist
+mkdir -p "$(dirname "$EXPERIMENT")"
+cp "$1" "$EXPERIMENT"
 
-if [[ $# -eq 2 ]];
+# Yaml and Jinja must be installed
+python3.14 -m pip install pyyaml jinja2
+
+if [[ $# -eq 2 ]]; then
     python3.14 "$LARGEPATH/lwfm/integrations/slurm/generate.py" dcs "$LARGEPATH" default "$DEVICE" "$USER" "$TIMESTAMP" "$EXPERIMENT"
 else
     python3.14 "$LARGEPATH/lwfm/integrations/slurm/generate.py" dcs "$LARGEPATH" custom "$DEVICE" "$USER" "$TIMESTAMP" "$SETUP"
