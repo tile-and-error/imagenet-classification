@@ -16,7 +16,6 @@ TIMESTAMP=$(ts '%Y%m%d-%H%M%S')
 SETUP=$3
 
 EXPERIMENT="$LARGEPATH/configs/experiments/$USER/$1"
-cp $1 $EXPERIMENT
 
 if [[ $# < 2 ]]; then
     echo "At least two parameters must be provided, the expiremnt file and system"
@@ -27,6 +26,8 @@ if [[ $# > 3 ]]; then
     echo "Too many parameters provided"
     exit 1
 fi
+
+cp $1 $EXPERIMENT
 
 if [[ $# -eq 2 ]];
     python3.14 "$LARGEPATH/lwfm/integrations/slurm/generate.py" dcs "$LARGEPATH" default "$DEVICE" "$USER" "$TIMESTAMP" "$EXPERIMENT"
