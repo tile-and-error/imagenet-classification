@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, Literal
 
 import torch
 
-from lwfm.loss.losses import LossBinding
 from lwfm.core.types import Batch
+from lwfm.loss.losses import LossBinding
 from lwfm.results.artifacts import save_artifact
 
 if TYPE_CHECKING:

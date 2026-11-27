@@ -6,10 +6,10 @@ import torch
 
 from lwfm.core.config import ExperimentConfig
 from lwfm.core.graph import ExecutionGraph
-from lwfm.loss.lossfactory import build_loss_composer
 from lwfm.data.factory import build_data_module
 from lwfm.evaluation.evaluator import Evaluator
 from lwfm.evaluation.factory import build_metric_bindings
+from lwfm.loss.lossfactory import build_loss_composer
 from lwfm.models.factory import build_model
 from lwfm.orchestration.recipe import Recipe
 from lwfm.orchestration.runcontext import RunContext

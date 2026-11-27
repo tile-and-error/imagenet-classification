@@ -5,8 +5,8 @@ from torchmetrics.classification import MulticlassAccuracy
 from torchvision.transforms import v2
 
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
-from lwfm.loss.losses import LossBinding, LossComposer
 from lwfm.evaluation.metrics import MetricBinding
+from lwfm.loss.losses import LossBinding, LossComposer
 
 from conftest import CE_READS
 

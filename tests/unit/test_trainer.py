@@ -6,8 +6,8 @@ from torch import nn
 from torchmetrics.classification import MulticlassAccuracy
 
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
-from lwfm.loss.losses import LossBinding, LossComposer
 from lwfm.evaluation.metrics import CurveBinding, MetricBinding
+from lwfm.loss.losses import LossBinding, LossComposer
 from lwfm.results.curves import ConfusionMatrix
 from lwfm.results.router import OutputRouter
 from lwfm.results.sinks import LocalFileSink

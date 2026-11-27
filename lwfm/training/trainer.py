@@ -11,10 +11,10 @@ from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
 from lwfm.core.batch import to_device
 from lwfm.core.graph import ExecutionGraph
-from lwfm.loss.losses import LossComposer
 from lwfm.core.types import Batch
 from lwfm.evaluation.evaluator import EvaluationResult, Evaluator
 from lwfm.evaluation.metrics import CurveBinding, MetricBinding
+from lwfm.loss.losses import LossComposer
 from lwfm.results.events import RunEvent
 from lwfm.results.sinks import OutputSink
 from lwfm.training.callbacks import Callback, check_callbacks
