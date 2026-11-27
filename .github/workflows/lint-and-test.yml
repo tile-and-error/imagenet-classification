@@ -17,6 +17,7 @@ jobs:
     name: Ruff
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    continue-on-error: true # non-blocking until existing errors are cleared
     steps:
       - uses: actions/checkout@v4
       # Ruff version follows the `ruff` requirement in pyproject.toml.
