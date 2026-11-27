@@ -1,6 +1,6 @@
 from torch import nn
 
-from lwfm.core.losses import LossBinding, LossComposer
+from lwfm.loss.losses import LossBinding, LossComposer
 
 LOSSES = {
     "cross_entropy": nn.CrossEntropyLoss,
