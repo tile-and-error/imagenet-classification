@@ -18,7 +18,7 @@ class FakeClassificationDataset(Dataset):
     def __len__(self):
         return len(self.labels)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int):
         return {
             "inputs": {"image": self.images[index]},
             "targets": {"class": self.labels[index]},
@@ -65,7 +65,7 @@ class FakeClassificationDataModule(DataModule):
                 self.seed + 2, self.num_val, self.num_classes, self.image_size
             )
 
-    def _loader(self, dataset, shuffle: bool):
+    def _loader(self, dataset: Dataset | None, shuffle: bool):
         if dataset is None:
             raise RuntimeError("Call setup() before using a loader")
 

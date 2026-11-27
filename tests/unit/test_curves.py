@@ -1,4 +1,6 @@
 import json
+from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 import torch
@@ -57,12 +59,12 @@ def test_confusion_matrix_predicts_the_highest_class_score():
         lambda: Lines({"x": [0.0, 1.0], "y": [1.0]}),
     ],
 )
-def test_malformed_values_fail_when_built(build):
+def test_malformed_values_fail_when_built(build: Callable[[], object]):
     with pytest.raises(ValueError):
         build()
 
 
-def test_the_run_record_stores_the_fields_as_plain_data(tmp_path):
+def test_the_run_record_stores_the_fields_as_plain_data(tmp_path: Path):
     roc = ROCCurve([0.0, 0.5, 1.0], [0.0, 0.9, 1.0], 0.7)
     with OutputRouter(LocalFileSink(tmp_path)) as sink:
         sink.write(RunEvent("table", "eval/val/roc", roc, step=3))

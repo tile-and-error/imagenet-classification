@@ -1,23 +1,36 @@
 import json
+from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 import torch
-from torch import nn
+from torch import Tensor, nn
+from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 from torchmetrics.classification import MulticlassAccuracy
 
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
+from lwfm.core.types import Batch
 from lwfm.evaluation.metrics import CurveBinding, MetricBinding
 from lwfm.loss.losses import LossBinding, LossComposer
 from lwfm.results.curves import ConfusionMatrix
 from lwfm.results.router import OutputRouter
 from lwfm.results.sinks import LocalFileSink
-from lwfm.training import Callback, Trainer, TrainingResult, seed_everything
+from lwfm.training import (
+    Callback,
+    StepOutput,
+    Trainer,
+    TrainingResult,
+    TrainingState,
+    seed_everything,
+)
 from lwfm.training.callbacks import HOOKS
+from lwfm.training.state import StopReason
 from lwfm.training.trainer import json_safe_values
 
 from conftest import (
     CE_READS,
     K,
+    ListSink,
     accuracy,
     batches,
     constant_metric,
@@ -32,7 +45,7 @@ class HookRecorder(Callback):
     def __init__(self):
         self.calls = []
 
-    def __getattribute__(self, name):
+    def __getattribute__(self, name: str):
         if name in HOOKS:
             return lambda state, *args: self.calls.append(name)
         return super().__getattribute__(name)
@@ -70,7 +83,7 @@ def test_matches_hand_written_loop_exactly():
         assert torch.equal(a, b)
 
 
-def test_counts_epochs_validates_each_epoch_and_logs(sink):
+def test_counts_epochs_validates_each_epoch_and_logs(sink: ListSink):
     _, graph, loss, optimizer = setup()
     result = Trainer(device="cpu", max_epochs=3, log_every_n_steps=5).fit(
         graph,
@@ -130,7 +143,7 @@ def test_max_steps_on_an_epoch_boundary_counts_the_epoch():
     assert recorder.calls.count("on_epoch_end") == 2
 
 
-def test_stopping_mid_epoch_skips_the_epoch_but_still_validates(sink):
+def test_stopping_mid_epoch_skips_the_epoch_but_still_validates(sink: ListSink):
     _, graph, loss, optimizer = setup()
     result = Trainer(device="cpu", max_steps=7).fit(
         graph,
@@ -164,7 +177,7 @@ def confusion():
     ids=["last_only", "every_2nd", "every"],
 )
 def test_curves_are_built_at_the_last_and_every_nth_validation(
-    sink, every, curve_steps
+    sink: ListSink, every: int | None, curve_steps: list[int]
 ):
     _, graph, loss, optimizer = setup()
     trainer = Trainer(
@@ -186,10 +199,12 @@ def test_curves_are_built_at_the_last_and_every_nth_validation(
     assert sink.steps_of("eval/val/top1") == [2, 4, 5]
     assert sink.steps_of("eval/val/confusion") == curve_steps
     tables = [event.value for event in sink.events if event.kind == "table"]
-    assert all(sum(map(sum, table.matrix)) == 8 for table in tables)  # all 2 * 4
+    for table in tables:
+        assert isinstance(table, ConfusionMatrix)
+        assert sum(map(sum, table.matrix)) == 8  # all 2 * 4
 
 
-def test_curves_arrive_when_the_last_step_is_validated_mid_epoch(sink):
+def test_curves_arrive_when_the_last_step_is_validated_mid_epoch(sink: ListSink):
     # Step 4 ends the only epoch, but is validated before the epoch is counted, so
     # the end isn't known yet: one curves-only pass follows
     _, graph, loss, optimizer = setup()
@@ -207,9 +222,9 @@ def test_curves_arrive_when_the_last_step_is_validated_mid_epoch(sink):
     assert sink.steps_of("eval/val/confusion") == [4]
 
 
-def test_a_run_a_callback_stops_still_ends_with_curves(sink):
+def test_a_run_a_callback_stops_still_ends_with_curves(sink: ListSink):
     class StopAtFirstValidation(Callback):
-        def on_validation_end(self, state, val_metrics):
+        def on_validation_end(self, state: TrainingState, metrics: dict[str, float]):
             state.should_stop = True
 
     _, graph, loss, optimizer = setup()
@@ -248,7 +263,7 @@ def test_frozen_teacher_stays_in_eval_and_unchanged():
     before = [p.clone() for p in teacher.parameters()]
 
     class CheckModes(Callback):
-        def on_step_start(self, state, batch):
+        def on_step_start(self, state: TrainingState, batch: Batch):
             assert state.graph.nodes["student"].training
             assert not state.graph.nodes["teacher"].training
 
@@ -264,7 +279,7 @@ def test_frozen_teacher_stays_in_eval_and_unchanged():
         assert b.grad is None
 
 
-def test_lr_is_logged_per_param_group(sink):
+def test_lr_is_logged_per_param_group(sink: ListSink):
     node, graph, loss, _ = setup()
     weight, bias = node.parameters()
     optimizer = torch.optim.SGD(
@@ -315,10 +330,10 @@ def test_plateau_scheduler_steps_from_a_callback():
     # by the trainer. The metric never changes, so with patience 0 every validation
     # after the first halves the learning rate.
     class Plateau(Callback):
-        def __init__(self, scheduler, monitored_metric):
+        def __init__(self, scheduler: ReduceLROnPlateau, monitored_metric: str):
             self.scheduler, self.monitored_metric = scheduler, monitored_metric
 
-        def on_validation_end(self, state, metrics):
+        def on_validation_end(self, state: TrainingState, metrics: dict[str, float]):
             self.scheduler.step(metrics[self.monitored_metric])
 
     _, graph, loss, optimizer = setup(lr=1.0)
@@ -355,7 +370,11 @@ def test_plateau_scheduler_steps_from_a_callback():
         ),
     ],
 )
-def test_scheduler_misuse_fails_before_training(make_scheduler, kwargs, message):
+def test_scheduler_misuse_fails_before_training(
+    make_scheduler: Callable[[torch.optim.Optimizer], LRScheduler],
+    kwargs,
+    message: str,
+):
     _, graph, loss, optimizer = setup()
     with pytest.raises(ValueError, match=message):
         Trainer(device="cpu", max_steps=1).fit(
@@ -437,7 +456,7 @@ def test_trainable_loss_parameter_missing_from_optimizer_is_named():
             super().__init__()
             self.temperature = nn.Parameter(torch.ones(()))
 
-        def forward(self, logits, target):
+        def forward(self, logits: Tensor, target: Tensor):
             return nn.functional.cross_entropy(logits / self.temperature, target)
 
     node, graph, _, optimizer = setup()  # the optimizer holds the student only
@@ -459,10 +478,10 @@ def test_val_loader_and_metrics_go_together():
 
 def test_a_failing_on_fit_end_after_a_crash_keeps_the_original_error():
     class CrashThenFailToSave(Callback):
-        def on_step_start(self, state, batch):
+        def on_step_start(self, state: TrainingState, batch: Batch):
             raise RuntimeError("step crashed")
 
-        def on_fit_end(self, state, result):
+        def on_fit_end(self, state: TrainingState, result: TrainingResult):
             raise OSError("disk full")
 
     _, graph, loss, optimizer = setup()
@@ -497,14 +516,16 @@ def test_empty_loader_fails():
         ({"max_steps": 1, "gradient_clip_norm": -1.0}, "gradient_clip_norm"),
     ],
 )
-def test_invalid_trainer_settings(kwargs, message):
+def test_invalid_trainer_settings(kwargs, message: str):
     with pytest.raises(ValueError, match=message):
         Trainer(device="cpu", **kwargs)
 
 
 def test_misspelled_hook_fails_before_training():
     class Typo(Callback):
-        def on_validation_ended(self, state, metrics): ...
+        def on_validation_ended(
+            self, state: TrainingState, metrics: dict[str, float]
+        ): ...
 
     _, graph, loss, optimizer = setup()
     with pytest.raises(ValueError, match="on_validation_ended"):
@@ -530,7 +551,7 @@ def test_non_callback_is_rejected():
 
 def test_callback_can_stop_training():
     class StopAfterFirstValidation(Callback):
-        def on_validation_end(self, state, metrics):
+        def on_validation_end(self, state: TrainingState, metrics: dict[str, float]):
             state.should_stop = True
 
     _, graph, loss, optimizer = setup()
@@ -551,15 +572,17 @@ def test_callback_can_stop_training():
     [(KeyboardInterrupt, "interrupted"), (RuntimeError, "failed")],
     ids=["ctrl_c", "crash"],
 )
-def test_early_exit_runs_on_fit_end_then_reraises(error, reason):
+def test_early_exit_runs_on_fit_end_then_reraises(
+    error: type[BaseException], reason: StopReason
+):
     ended = []
 
     class Exit(Callback):
-        def on_step_end(self, state, output):
+        def on_step_end(self, state: TrainingState, output: StepOutput):
             if state.global_step == 2:
                 raise error
 
-        def on_fit_end(self, state, result):
+        def on_fit_end(self, state: TrainingState, result: TrainingResult):
             ended.append(result.stop_reason)
 
     _, graph, loss, optimizer = setup()
@@ -573,7 +596,7 @@ def test_early_exit_runs_on_fit_end_then_reraises(error, reason):
 # --- recorded settings ---------------------------------------------------------
 
 
-def test_settings_are_recorded_once_before_training(sink):
+def test_settings_are_recorded_once_before_training(sink: ListSink):
     _, graph, loss, optimizer = setup(seed=3)
     Trainer(
         device="cpu",
@@ -589,6 +612,7 @@ def test_settings_are_recorded_once_before_training(sink):
     assert (first.kind, first.name, first.step) == ("message", "trainer/settings", 0)
     assert [e.name for e in sink.events].count("trainer/settings") == 1
     settings = first.value
+    assert isinstance(settings, dict)
     assert settings["precision"] == "bf16"
     assert settings["accumulate_grad_batches"] == 2
     assert settings["gradient_clip_norm"] == 1.0
@@ -600,7 +624,7 @@ def test_settings_are_recorded_once_before_training(sink):
     assert settings["callbacks"] == ["HookRecorder"]
 
 
-def test_settings_survive_a_file_sink(tmp_path):
+def test_settings_survive_a_file_sink(tmp_path: Path):
     node, graph, loss, _ = setup()
     optimizer = torch.optim.Adam(node.parameters(), lr=1e-3)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1)

@@ -1,6 +1,8 @@
+from collections.abc import Callable
+
 import pytest
 import torch
-from torch import nn
+from torch import Tensor, nn
 from torchmetrics.classification import MulticlassAccuracy
 from torchvision.transforms import v2
 
@@ -12,11 +14,11 @@ from conftest import CE_READS
 
 
 class Lambda(nn.Module):
-    def __init__(self, fn):
+    def __init__(self, fn: Callable[[Tensor], Tensor]):
         super().__init__()
         self.fn = fn
 
-    def forward(self, x):
+    def forward(self, x: Tensor):
         return self.fn(x)
 
 
@@ -25,12 +27,12 @@ class Probe(nn.Module):
         super().__init__()
         self.seen = []
 
-    def forward(self, x):
+    def forward(self, x: Tensor):
         self.seen.append((self.training, torch.is_grad_enabled()))
         return x
 
 
-def classifier(*tail):
+def classifier(*tail: nn.Module):
     return nn.Sequential(
         v2.Resize((16, 16), antialias=True),
         nn.Flatten(),
@@ -39,7 +41,7 @@ def classifier(*tail):
     )
 
 
-def student(*tail):
+def student(*tail: nn.Module):
     return ModelNode("student", classifier(*tail), "inputs.image", "logits")
 
 
@@ -47,7 +49,7 @@ def probe():  # wrong input size: student.logits has 10 features, not 512
     return ModelNode("probe", nn.Linear(512, 2), "student.logits", "logits")
 
 
-def batch(size=4, height=16, width=16):
+def batch(size: int = 4, height: int = 16, width: int = 16):
     return {
         "inputs": {"image": torch.rand(size, 3, height, width)},
         "targets": {"class": torch.randint(0, 10, (size,))},
@@ -66,7 +68,7 @@ def test_sample_of_another_size_is_resized_inside():
 
 
 def test_no_sample_skips_the_check():
-    def boom(x):
+    def boom(x: Tensor):
         raise AssertionError("must not run")
 
     graph = ExecutionGraph([student(Lambda(boom))])

@@ -1,7 +1,8 @@
 import pytest
 import torch
-from torch import nn
+from torch import Tensor, nn
 
+from lwfm.core.types import Batch, Name
 from lwfm.loss.losses import LossBinding, LossComposer
 
 from conftest import CE_READS
@@ -28,7 +29,9 @@ def composer():
     )
 
 
-def test_composer_total_is_weighted_sum_of_terms(composer, batch, outputs):
+def test_composer_total_is_weighted_sum_of_terms(
+    composer: LossComposer, batch: Batch, outputs: dict[Name, Tensor]
+):
     # Both rows of the logits give the same loss, so the means are closed-form:
     # CE = log(1 + e^-0.5 + e^-1); margin = (max(0, 1 - 1 + 0.5) + 0) / 3 = 1/6.
     ce, margin = 0.6802696585655212, 1 / 6
@@ -41,13 +44,15 @@ def test_composer_total_is_weighted_sum_of_terms(composer, batch, outputs):
     assert outputs["student.logits"].grad is not None
 
 
-def test_composer_terms_are_detached(composer, batch, outputs):
+def test_composer_terms_are_detached(
+    composer: LossComposer, batch: Batch, outputs: dict[Name, Tensor]
+):
     total, terms = composer(batch, outputs)
     assert total.requires_grad
     assert not any(term.requires_grad for term in terms.values())
 
 
-def test_plain_callable_loss_is_accepted(batch, outputs):
+def test_plain_callable_loss_is_accepted(batch: Batch, outputs: dict[Name, Tensor]):
     composer = LossComposer(
         [LossBinding("sq", lambda x: (x**2).mean(), "student.logits")]
     )
@@ -71,7 +76,9 @@ def test_loss_with_parameters_is_registered():
 @pytest.mark.parametrize(
     "value", [torch.tensor(float("nan")), torch.ones(2)], ids=["nan", "not_scalar"]
 )
-def test_non_finite_or_non_scalar_loss_fails(batch, outputs, value):
+def test_non_finite_or_non_scalar_loss_fails(
+    batch: Batch, outputs: dict[Name, Tensor], value: Tensor
+):
     composer = LossComposer([LossBinding("bad", lambda: value, [])])
     with pytest.raises(ValueError, match="bad"):
         composer(batch, outputs)

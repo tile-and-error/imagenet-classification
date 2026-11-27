@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -10,14 +11,14 @@ from conftest import ListSink
 
 
 class BrokenSink(OutputSink):
-    def write(self, event):
+    def write(self, event: RunEvent):
         raise OSError("disk full")
 
     def close(self):
         pass
 
 
-def statuses(sink):
+def statuses(sink: ListSink):
     return [e.value for e in sink.events if e.kind == "status"]
 
 
@@ -33,24 +34,25 @@ def test_router_is_an_output_sink_and_broadcasts_in_order():
     assert first.closed and second.closed
 
 
-def test_normal_exit_records_completed_and_closes(sink):
+def test_normal_exit_records_completed_and_closes(sink: ListSink):
     with OutputRouter(sink) as router:
         router.write(RunEvent("scalar", "train/loss/total", 1.0))
     assert statuses(sink) == ["completed"]
     assert sink.closed
 
 
-def test_exception_records_traceback_and_failed_then_propagates(sink):
+def test_exception_records_traceback_and_failed_then_propagates(sink: ListSink):
     with pytest.raises(RuntimeError, match="boom"), OutputRouter(sink):
         raise RuntimeError("boom")
     (message,) = [e for e in sink.events if e.kind == "message"]
     assert message.name == "traceback"
+    assert isinstance(message.value, str)
     assert "RuntimeError: boom" in message.value
     assert statuses(sink) == ["failed"]
     assert sink.closed
 
 
-def test_keyboard_interrupt_records_interrupted(sink):
+def test_keyboard_interrupt_records_interrupted(sink: ListSink):
     with pytest.raises(KeyboardInterrupt), OutputRouter(sink):
         raise KeyboardInterrupt
     assert statuses(sink) == ["interrupted"]
@@ -63,7 +65,7 @@ def test_failing_sink_raises_sink_error_naming_sink_and_event():
         router.write(RunEvent("scalar", "train/loss/total", 1.0))
 
 
-def test_run_directory_after_a_failed_run(tmp_path):
+def test_run_directory_after_a_failed_run(tmp_path: Path):
     with pytest.raises(ValueError), OutputRouter(LocalFileSink(tmp_path)) as router:
         router.write(RunEvent("scalar", "train/loss/total", 1.0, step=0))
         raise ValueError("loss is nan")

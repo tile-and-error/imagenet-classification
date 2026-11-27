@@ -1,7 +1,7 @@
 from lwfm.data.fakeclassification import FakeClassificationDataModule
 
 
-def build_data_module(config, seed):
+def build_data_module(config, seed: int):
     """Convert the YAML data config into an instance of a DataModule"""
     data_registry = {
         "fake_classification": FakeClassificationDataModule,
@@ -10,7 +10,7 @@ def build_data_module(config, seed):
     data_type = config["type"]
 
     if data_type not in data_registry:
-        return ValueError(f"{data_type} is not a defined dataset")
+        raise ValueError(f"{data_type} is not a defined dataset")
 
     return data_registry[data_type](
         seed,

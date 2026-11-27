@@ -7,7 +7,7 @@ from lwfm.core.graph import ModelNode
 from lwfm.models.preprocessing import build_preprocessing
 
 
-def build_torchvision_model(config: dict[str, Any]) -> ModelNode:
+def build_torchvision_model(config: dict[str, Any]) -> nn.Module:
     model_registry = {"resnet18": torchvision.models.resnet18}
 
     model_name = config["name"]

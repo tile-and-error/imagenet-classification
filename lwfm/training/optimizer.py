@@ -1,7 +1,9 @@
+from collections.abc import Iterable
+
 import torch
 
 
-def build_optimizer(prameters, config):
+def build_optimizer(parameters: Iterable[torch.nn.Parameter], config):
     optimizer_registry = {"sgd": torch.optim.SGD}
 
     optimizer_name = config["name"]
@@ -11,13 +13,15 @@ def build_optimizer(prameters, config):
         raise ValueError(f"Unknown Optimizer: {config['name']}")
 
     optimizer = optimizer_registry[optimizer_name](
-        prameters, lr=learning_rate, **config.get("kwargs", {})
+        parameters, lr=learning_rate, **config.get("kwargs", {})
     )
 
     return optimizer
 
 
-def build_scheduler(config, optimizer, epochs, train_len):
+def build_scheduler(
+    config, optimizer: torch.optim.Optimizer, epochs: int, train_len: int
+):
     scheduler_registry = {
         "cosine_annealing_lr": torch.optim.lr_scheduler.CosineAnnealingLR
     }

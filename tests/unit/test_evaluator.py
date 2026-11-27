@@ -2,16 +2,18 @@ from dataclasses import dataclass
 
 import pytest
 import torch
-from torch import nn
+from matplotlib.axes import Axes
+from torch import Tensor, nn
 from torchmetrics.classification import MulticlassAccuracy
 
 from lwfm.core.batch import to_device
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
+from lwfm.core.types import Batch
 from lwfm.evaluation.evaluator import Evaluator
 from lwfm.evaluation.metrics import CurveBinding, MetricBinding
 from lwfm.results.curves import ConfusionMatrix
 
-from conftest import CE_READS
+from conftest import CE_READS, ListSink
 
 CPU = torch.device("cpu")
 
@@ -29,7 +31,7 @@ LOGITS = torch.tensor(
 CLASSES = torch.tensor([0, 1, 5, 2])
 
 
-def batch(rows):
+def batch(rows: list[int]):
     return {
         "inputs": {"logits": LOGITS[rows]},
         "targets": {"class": CLASSES[rows]},
@@ -41,12 +43,12 @@ def batch(rows):
 LOADER = [batch([0, 1, 2]), batch([3])]
 
 
-def logits_graph(module=None):
+def logits_graph(module: nn.Module | None = None):
     node = ModelNode("student", module or nn.Identity(), "inputs.logits", "logits")
     return ExecutionGraph([node], preflight_sample=LOADER[0])
 
 
-def top_k(k):
+def top_k(k: int):
     return MetricBinding(
         f"top{k}", MulticlassAccuracy(num_classes=6, top_k=k, average="micro"), CE_READS
     )
@@ -58,7 +60,7 @@ class Probe(nn.Module):
         self.linear = nn.Linear(6, 6)
         self.seen_modes = []
 
-    def forward(self, x):
+    def forward(self, x: Tensor):
         self.seen_modes.append((self.training, torch.is_inference_mode_enabled()))
         return self.linear(x)
 
@@ -99,7 +101,7 @@ def test_eval_mode_is_kept_if_graph_was_in_eval():
 
 
 @pytest.mark.parametrize("was_training", [True, False], ids=["train", "eval"])
-def test_mode_is_restored_when_a_metric_fails(was_training):
+def test_mode_is_restored_when_a_metric_fails(was_training: bool):
     # .train(False) is equivalent to .eval()
     graph = logits_graph().train(was_training)
     bad = MetricBinding("bad", MulticlassAccuracy(num_classes=6), ["targets.missing"])
@@ -108,7 +110,7 @@ def test_mode_is_restored_when_a_metric_fails(was_training):
     assert graph.training == was_training
 
 
-def test_values_are_emitted_as_eval_split_name(sink):
+def test_values_are_emitted_as_eval_split_name(sink: ListSink):
     Evaluator().evaluate(
         logits_graph(),
         LOADER,
@@ -143,7 +145,12 @@ def test_values_are_emitted_as_eval_split_name(sink):
     ],
     ids=["empty_loader", "no_metrics", "duplicate_names", "non_scalar_metric"],
 )
-def test_bad_inputs_fail_clearly(loader, metrics, error, match):
+def test_bad_inputs_fail_clearly(
+    loader: list[Batch],
+    metrics: list[MetricBinding],
+    error: type[Exception],
+    match: str,
+):
     with pytest.raises(error, match=match):
         Evaluator().evaluate(logits_graph(), loader, metrics, device=CPU)
 
@@ -152,7 +159,7 @@ def confusion():
     return CurveBinding("confusion", ConfusionMatrix.from_scores, CE_READS)
 
 
-def test_a_curve_is_built_from_the_whole_split_and_emitted(sink):
+def test_a_curve_is_built_from_the_whole_split_and_emitted(sink: ListSink):
     result = Evaluator().evaluate(
         logits_graph(),
         LOADER,  # two unequal batches
@@ -178,7 +185,9 @@ def test_curve_values_reset_between_runs():
     second = Evaluator().evaluate(
         logits_graph(), LOADER[1:], [top_k(1)], curve_bindings=curves, device=CPU
     )
-    assert sum(map(sum, second.curves["confusion"].matrix)) == 1  # one sample
+    confusion_matrix = second.curves["confusion"]
+    assert isinstance(confusion_matrix, ConfusionMatrix)
+    assert sum(map(sum, confusion_matrix.matrix)) == 1  # one sample
 
 
 def test_curves_alone_need_no_metric():
@@ -200,7 +209,7 @@ def test_a_curve_and_a_metric_cannot_share_a_name():
 class Shapes:
     shapes: list[list[int]]
 
-    def draw(self, axes):
+    def draw(self, axes: Axes):
         pass
 
 
@@ -213,11 +222,13 @@ def test_a_curve_reads_any_number_of_values_in_order():
     result = Evaluator().evaluate(
         logits_graph(), LOADER, [top_k(1)], curve_bindings=[shapes], device=CPU
     )
-    assert result.curves["shapes"].shapes == [[4, 6], [4], [4, 6]]  # batches joined
+    built = result.curves["shapes"]
+    assert isinstance(built, Shapes)
+    assert built.shapes == [[4, 6], [4], [4, 6]]  # batches joined
 
 
 def test_a_failing_curve_names_itself_and_what_it_read():
-    def broken(scores, labels):
+    def broken(scores: Tensor, labels: Tensor):
         raise RuntimeError("bad curve")
 
     curve = CurveBinding("broken", broken, CE_READS)
@@ -231,7 +242,10 @@ def test_a_failing_curve_names_itself_and_what_it_read():
 
 
 def test_a_curve_must_build_something_drawable():
-    plain = CurveBinding("plain", lambda scores, labels: {"n": len(scores)}, CE_READS)
+    def plain_dict(scores: Tensor, labels: Tensor) -> dict[str, int]:
+        return {"n": len(scores)}
+
+    plain = CurveBinding("plain", plain_dict, CE_READS)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="'plain' built a dict, which has no draw"):
         Evaluator().evaluate(
             logits_graph(), LOADER, [top_k(1)], curve_bindings=[plain], device=CPU

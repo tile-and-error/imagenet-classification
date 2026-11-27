@@ -1,10 +1,12 @@
 import os
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 import torch
 
+from lwfm.core.graph import ExecutionGraph
 from lwfm.orchestration.runcontext import RunContext
 from lwfm.training.optimizer import build_optimizer, build_scheduler
 
@@ -12,7 +14,7 @@ from lwfm.training.optimizer import build_optimizer, build_scheduler
 @dataclass
 class StageResult:
     artifacts: dict[str, str]  # name -> path inside the run directory
-    measurements: dict[str, float | int | str]
+    measurements: Mapping[str, float | int | str]
     status: str = "completed"
 
 
@@ -106,7 +108,7 @@ class EvaluateStage(Stage):
             graph,
             loader,
             ctx.metric_bindings,
-            device=ctx.config.device,
+            device=torch.device(ctx.config.device),
             output_sink=ctx.output_router,
             split_name=self.split,
         )
@@ -127,7 +129,12 @@ class BenchmarkStage(Stage):
 
 
 def save_checkpoint(
-    path: Path, graph, optimizer, epoch: int, global_step: int, deployable_name
+    path: Path,
+    graph: ExecutionGraph,
+    optimizer: torch.optim.Optimizer,
+    epoch: int,
+    global_step: int,
+    deployable_name: str,
 ):
     checkpoint = {
         "model_state_dict": graph.state_dict(),

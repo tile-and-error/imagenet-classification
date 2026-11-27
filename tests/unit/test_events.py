@@ -2,8 +2,9 @@ from datetime import datetime, timedelta
 
 import pytest
 import torch
+from torch import Tensor
 
-from lwfm.results.events import RunEvent
+from lwfm.results.events import EventKind, RunEvent
 
 
 def test_timestamp_is_set_in_utc():
@@ -22,7 +23,7 @@ def test_one_element_tensor_scalar_becomes_a_number():
     [("scalar", torch.ones(2)), ("table", torch.tensor(1.0))],
     ids=["two_element_scalar", "tensor_in_table"],
 )
-def test_other_tensors_are_refused(kind, value):
+def test_other_tensors_are_refused(kind: EventKind, value: Tensor):
     with pytest.raises(TypeError, match="logits.*artifact event"):
         RunEvent(kind, "logits", value)
 

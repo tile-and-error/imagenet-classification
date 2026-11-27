@@ -68,7 +68,7 @@ class TrainingState:
         # gradients never carry over into the next one
         return self.accumulated >= self.accumulate_grad_batches or self.is_last_batch
 
-    def emit(self, hook: str, *args) -> None:
+    def emit(self, hook: str, *args: object) -> None:
         for callback in self.callbacks:
             getattr(callback, hook)(self, *args)
 

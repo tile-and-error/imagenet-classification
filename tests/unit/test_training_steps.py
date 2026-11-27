@@ -1,8 +1,10 @@
 import pytest
 import torch
-from torch import nn
+from torch import Tensor, nn
 
+from lwfm.core.types import Batch
 from lwfm.training import Callback, StepOutput, Trainer
+from lwfm.training.state import TrainingState
 from lwfm.training.steps import backward, forward_and_loss
 
 from conftest import K, batches, setup
@@ -16,7 +18,7 @@ class RecordsDtype(nn.Module):
         self.linear = nn.Linear(12, K)
         self.dtypes = []
 
-    def forward(self, image):
+    def forward(self, image: Tensor):
         out = self.linear(image.flatten(1))
         self.dtypes.append(out.dtype)
         return out
@@ -26,7 +28,7 @@ class CountSteps(Callback):
     def __init__(self):
         self.optimizer_steps = 0
 
-    def on_after_optimizer_step(self, state):
+    def on_after_optimizer_step(self, state: TrainingState):
         self.optimizer_steps += 1
 
 
@@ -54,7 +56,7 @@ def test_max_steps_counts_optimizer_steps_not_batches():
             super().__init__()
             self.batches = 0
 
-        def on_step_start(self, state, batch):
+        def on_step_start(self, state: TrainingState, batch: Batch):
             self.batches += 1
 
     node, graph, loss, _ = setup()
@@ -117,7 +119,7 @@ def test_fp16_uses_a_grad_scaler_and_trains():
     scalers = []
 
     class RecordScaler(Callback):
-        def on_fit_start(self, state):
+        def on_fit_start(self, state: TrainingState):
             scalers.append(state.scaler)
 
     node, graph, loss, _ = setup()
@@ -138,7 +140,7 @@ def test_fp16_uses_a_grad_scaler_and_trains():
 # --- custom steps ---------------------------------------------------------------
 
 
-def manual_step(state, batch):
+def manual_step(state: TrainingState, batch: Batch):
     """A custom step that calls .backward() itself instead of the helpers."""
     total, terms = forward_and_loss(state, batch)
     total.backward()
@@ -157,7 +159,7 @@ def test_custom_step_works_in_plain_fp32():
 
 def test_a_step_that_stops_using_the_helpers_is_refused():
     # Helpers on the first batch only: every later step must be checked too
-    def helpers_once(state, batch):
+    def helpers_once(state: TrainingState, batch: Batch):
         if state.global_step == 0 and state.accumulated == 1:
             total, terms = forward_and_loss(state, batch)
             backward(state, total)

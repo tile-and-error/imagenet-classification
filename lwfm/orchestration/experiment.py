@@ -1,6 +1,7 @@
 import random
 from datetime import UTC, datetime
 from pathlib import Path
+from types import TracebackType
 
 import torch
 
@@ -14,9 +15,9 @@ from lwfm.models.factory import build_model
 from lwfm.orchestration.recipe import Recipe
 from lwfm.orchestration.runcontext import RunContext
 from lwfm.orchestration.stages import BenchmarkStage, EvaluateStage, FitStage
-from lwfm.results.events import RunEvent
+from lwfm.results.events import RunEvent, RunStatus
 from lwfm.results.router import OutputRouter
-from lwfm.results.sinks import ConsoleSink, LocalFileSink
+from lwfm.results.sinks import ConsoleSink, LocalFileSink, OutputSink
 from lwfm.training.trainer import Trainer
 
 
@@ -51,7 +52,7 @@ class Experiment:
             pipeline,
             build_trainer(config.training, config.device),
             Evaluator(),
-            OutputRouter(build_routers(config.outputs, output_dir)),
+            OutputRouter(*build_routers(config.outputs, output_dir)),
             build_data_module(config.data, config.seed),
             build_loss_composer(config.losses),
             build_metric_bindings(config.metrics),
@@ -61,16 +62,13 @@ class Experiment:
         self.recipe = build_recipe(config.recipe)
 
     def run(self):
+        status: RunStatus = "failed"
         try:
             self.recipe.execute(self.context)
             status = "completed"
 
         except KeyboardInterrupt:
             status = "interrupted"
-            raise
-
-        except Exception:
-            status = "failed"
             raise
 
         finally:
@@ -87,7 +85,12 @@ class Experiment:
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ):
         # Safely close the experiment
         context = getattr(self, "context", None)
         output_router = getattr(context, "output_router", None)
@@ -96,7 +99,7 @@ class Experiment:
             output_router.close()
 
 
-def build_trainer(config, device):
+def build_trainer(config, device: str):
     return Trainer(
         device=device,
         max_epochs=config["max_epochs"],
@@ -104,25 +107,24 @@ def build_trainer(config, device):
     )
 
 
-def build_routers(outputs, file_dir):
-    for i in range(len(outputs["sinks"])):
-        if outputs["sinks"][i] == "local":
-            return LocalFileSink(file_dir)
-        elif outputs["sinks"][i] == "console":
-            return ConsoleSink()
+def build_routers(outputs, file_dir: Path) -> list[OutputSink]:
+    sinks: list[OutputSink] = []
+    for sink in outputs["sinks"]:
+        if sink == "local":
+            sinks.append(LocalFileSink(file_dir))
+        elif sink == "console":
+            sinks.append(ConsoleSink())
         else:
             raise ValueError("Incorrect Router Type")
+    return sinks
 
 
-STAGE_TYPES = {
-    "fit": FitStage,
-    "evaluate": EvaluateStage,
-    "benchmark": BenchmarkStage
-}
+STAGE_TYPES = {"fit": FitStage, "evaluate": EvaluateStage, "benchmark": BenchmarkStage}
+
 
 def build_stage(stage):
     if stage["type"] not in STAGE_TYPES:
-        raise ValueError(f"Incorrect stage type {stage["type"]}")
+        raise ValueError(f"Incorrect stage type {stage['type']}")
     else:
         return STAGE_TYPES[stage["type"]]()
 

@@ -3,6 +3,7 @@ import torch
 from torch import Tensor, nn
 
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
+from lwfm.core.types import Batch
 from lwfm.loss.losses import LossBinding
 
 
@@ -44,8 +45,9 @@ def batch():
     }
 
 
-def student() -> ModelNode:
-    return ModelNode("student", Scale(), inputs="inputs.image", outputs="y")
+def student(module: nn.Module | None = None) -> ModelNode:
+    module = Scale() if module is None else module
+    return ModelNode("student", module, inputs="inputs.image", outputs="y")
 
 
 def test_node_writes_tensor_under_its_own_name():
@@ -100,7 +102,7 @@ def test_wrong_number_of_outputs_fails():
 
 
 @pytest.mark.parametrize("name", ["a.b", "inputs", "targets", "meta"])
-def test_bad_node_names_fail(name):
+def test_bad_node_names_fail(name: str):
     with pytest.raises(GraphError, match="node name"):
         ModelNode(name, Scale(), inputs="inputs.image", outputs="y")
 
@@ -110,14 +112,14 @@ def test_duplicate_writes_fail():
         ModelNode("s", Pair(), inputs="inputs.image", outputs=["y", "y"])
 
 
-def test_one_node_graph_reads_batch_and_returns_flat_names(batch):
+def test_one_node_graph_reads_batch_and_returns_flat_names(batch: Batch):
     graph = ExecutionGraph([student()], preflight_sample=batch)
     out = graph(batch)
     assert set(out) == {"student.y"}
     torch.testing.assert_close(out["student.y"], 2 * batch["inputs"]["image"])
 
 
-def test_nodes_run_in_dependency_order_not_list_order(batch):
+def test_nodes_run_in_dependency_order_not_list_order(batch: Batch):
     graph = ExecutionGraph(
         [
             ModelNode("c", Sub(), inputs=["b.y", "a.y"], outputs="y"),
@@ -131,27 +133,29 @@ def test_nodes_run_in_dependency_order_not_list_order(batch):
     torch.testing.assert_close(graph(batch)["c.y"], 4 * x - 2 * x)
 
 
-def test_graph_is_a_normal_module(batch):
-    graph = ExecutionGraph([student()], preflight_sample=batch)
+def test_graph_is_a_normal_module(batch: Batch):
+    scale = Scale()
+    graph = ExecutionGraph([student(scale)], preflight_sample=batch)
     assert isinstance(graph, nn.Module)
     assert len(list(graph.parameters())) == 1
     assert list(graph.state_dict()) == ["nodes.student.module.w"]
     graph.eval()
-    assert not graph.nodes["student"].module.training
+    assert not scale.training
     graph.train()
-    assert graph.nodes["student"].module.training
+    assert scale.training
 
     clone = ExecutionGraph([student()], preflight_sample=batch)
     with torch.no_grad():
-        graph.nodes["student"].module.w.fill_(3.0)
+        scale.w.fill_(3.0)
     clone.load_state_dict(graph.state_dict())
     torch.testing.assert_close(clone(batch)["student.y"], graph(batch)["student.y"])
 
 
-def test_gradients_reach_node_parameters(batch):
-    graph = ExecutionGraph([student()], preflight_sample=batch)
+def test_gradients_reach_node_parameters(batch: Batch):
+    scale = Scale()
+    graph = ExecutionGraph([student(scale)], preflight_sample=batch)
     graph(batch)["student.y"].sum().backward()
-    assert graph.nodes["student"].module.w.grad is not None
+    assert scale.w.grad is not None
 
 
 def test_deployable_model_is_the_nodes_module():
@@ -187,7 +191,7 @@ def test_deployable_model_is_the_nodes_module():
     ],
     ids=["duplicate_name", "unknown_name", "cycle"],
 )
-def test_invalid_graphs_fail_at_build_time(nodes, message):
+def test_invalid_graphs_fail_at_build_time(nodes: list[ModelNode], message: str):
     with pytest.raises(GraphError, match=message):
         ExecutionGraph(nodes)
 

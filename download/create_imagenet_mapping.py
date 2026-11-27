@@ -13,7 +13,7 @@ import ast
 import json
 from pathlib import Path
 
-from timm.data import ImageNetInfo
+from timm.data.imagenet_info import ImageNetInfo
 
 parser = argparse.ArgumentParser()
 parser.add_argument("dir", type=Path)
