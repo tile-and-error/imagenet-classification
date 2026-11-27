@@ -2,6 +2,7 @@ import random
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
+from typing import Self
 
 import torch
 
@@ -14,7 +15,7 @@ from lwfm.loss.lossfactory import build_loss_composer
 from lwfm.models.factory import build_model
 from lwfm.orchestration.recipe import Recipe
 from lwfm.orchestration.runcontext import RunContext
-from lwfm.orchestration.stages import BenchmarkStage, EvaluateStage, FitStage
+from lwfm.orchestration.stages import BenchmarkStage, EvaluateStage, FitStage, Stage
 from lwfm.results.events import RunEvent, RunStatus
 from lwfm.results.router import OutputRouter
 from lwfm.results.sinks import ConsoleSink, LocalFileSink, OutputSink
@@ -61,7 +62,7 @@ class Experiment:
 
         self.recipe = build_recipe(config.recipe)
 
-    def run(self):
+    def run(self) -> None:
         status: RunStatus = "failed"
         try:
             self.recipe.execute(self.context)
@@ -82,7 +83,7 @@ class Experiment:
                 )
             )
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(
@@ -90,7 +91,7 @@ class Experiment:
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
-    ):
+    ) -> None:
         # Safely close the experiment
         context = getattr(self, "context", None)
         output_router = getattr(context, "output_router", None)
@@ -99,7 +100,7 @@ class Experiment:
             output_router.close()
 
 
-def build_trainer(config, device: str):
+def build_trainer(config, device: str) -> Trainer:  # noqa: ANN001
     return Trainer(
         device=device,
         max_epochs=config["max_epochs"],
@@ -107,7 +108,7 @@ def build_trainer(config, device: str):
     )
 
 
-def build_routers(outputs, file_dir: Path) -> list[OutputSink]:
+def build_routers(outputs, file_dir: Path) -> list[OutputSink]:  # noqa: ANN001
     sinks: list[OutputSink] = []
     for sink in outputs["sinks"]:
         if sink == "local":
@@ -122,13 +123,13 @@ def build_routers(outputs, file_dir: Path) -> list[OutputSink]:
 STAGE_TYPES = {"fit": FitStage, "evaluate": EvaluateStage, "benchmark": BenchmarkStage}
 
 
-def build_stage(stage):
+def build_stage(stage) -> Stage:  # noqa: ANN001
     if stage["type"] not in STAGE_TYPES:
         raise ValueError(f"Incorrect stage type {stage['type']}")
     else:
         return STAGE_TYPES[stage["type"]]()
 
 
-def build_recipe(recipe):
+def build_recipe(recipe) -> Recipe:  # noqa: ANN001
     stages = [build_stage(stage) for stage in recipe["stages"]]
     return Recipe(stages)

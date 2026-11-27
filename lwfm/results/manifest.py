@@ -4,7 +4,7 @@ import torch
 import torchvision
 
 
-def environment() -> dict[str, object]:
+def environment() -> dict[str, str | None]:
     """Versions and machine to record with every run."""
     return {
         "python": platform.python_version(),

@@ -8,6 +8,7 @@ from torch.amp.grad_scaler import GradScaler
 from torch.optim.lr_scheduler import LRScheduler
 
 from lwfm.core.graph import ExecutionGraph
+from lwfm.core.types import Batch
 from lwfm.loss.losses import LossComposer
 from lwfm.results.sinks import OutputSink
 
@@ -21,6 +22,9 @@ type SchedulerInterval = Literal["step", "epoch"]
 type StopReason = Literal["max_epochs", "max_steps", "stopped", "interrupted", "failed"]
 # (global_step, validation metrics) for every validation, in order
 type History = list[tuple[int, dict[str, float]]]
+# What a hook receives after the state: the batch (on_step_start), the step output
+# (on_step_end), the validation metrics (on_validation_end) or the result (on_fit_end)
+type HookArg = Batch | StepOutput | dict[str, float] | TrainingResult
 
 
 class StepOutput(NamedTuple):
@@ -68,11 +72,11 @@ class TrainingState:
         # gradients never carry over into the next one
         return self.accumulated >= self.accumulate_grad_batches or self.is_last_batch
 
-    def emit(self, hook: str, *args: object) -> None:
+    def emit(self, hook: str, *args: HookArg) -> None:
         for callback in self.callbacks:
             getattr(callback, hook)(self, *args)
 
-    def state_dict(self) -> dict:
+    def state_dict(self):
         """Tensors and plain values only, so `torch.load(..., weights_only=True)` can
         read it back. The whole graph is saved, teachers included: an EMA teacher
         changes during training."""

@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import torch
+from torch import Tensor
 
 from lwfm.core.types import Batch
 from lwfm.loss.losses import LossBinding
@@ -243,12 +244,12 @@ class ModelCheckpoint(Callback):
                 "checkpoint/last_weights",
             )
 
-    def _node_weights(self, state: "TrainingState") -> dict:
+    def _node_weights(self, state: "TrainingState") -> dict[str, Tensor]:
         # The deployable module only: no teachers, no training-only projectors
         return state.graph.deployable_model(self.node).state_dict()
 
     def _save(
-        self, state: "TrainingState", contents: dict, path: Path, event_name: str
+        self, state: "TrainingState", contents, path: Path, event_name: str
     ) -> None:
         save_artifact(
             self.run_dir,

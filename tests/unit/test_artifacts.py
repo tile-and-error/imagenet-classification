@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 from matplotlib.figure import Figure
@@ -13,7 +14,7 @@ from conftest import ListSink, is_png
 
 def test_the_file_is_saved_then_recorded_with_a_relative_path(
     tmp_path: Path, sink: ListSink
-):
+) -> None:
     path = save_artifact(
         tmp_path,
         "notes/a.txt",
@@ -33,7 +34,7 @@ def test_the_file_is_saved_then_recorded_with_a_relative_path(
     assert sorted(p.name for p in path.parent.iterdir()) == ["a.txt"]  # no temp file
 
 
-def test_a_figure_keeps_its_format(tmp_path: Path):
+def test_a_figure_keeps_its_format(tmp_path: Path) -> None:
     # savefig picks the format from the suffix, so the temporary file keeps it
     figure = Figure()
     figure.subplots().plot([0, 1], [0, 1])
@@ -43,12 +44,12 @@ def test_a_figure_keeps_its_format(tmp_path: Path):
 
 def test_a_failed_write_keeps_the_old_file_and_records_nothing(
     tmp_path: Path, sink: ListSink
-):
+) -> None:
     save_artifact(
         tmp_path, "a.txt", lambda target: target.write_text("old"), None, name="a"
     )
 
-    def fail(target: Path):
+    def fail(target: Path) -> NoReturn:
         target.write_text("half")
         raise OSError("disk full")
 
@@ -59,7 +60,7 @@ def test_a_failed_write_keeps_the_old_file_and_records_nothing(
     assert sink.events == []
 
 
-def test_the_event_reaches_the_run_record(tmp_path: Path):
+def test_the_event_reaches_the_run_record(tmp_path: Path) -> None:
     with OutputRouter(LocalFileSink(tmp_path)) as sink:
         figure = Figure()
         figure.subplots().bar(["cat", "dog"], [3, 5])

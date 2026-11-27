@@ -34,12 +34,15 @@
     CE --> SUM["LossComposer: 0.5·CE + w·KD"]
     KD --> SUM
     SUM --> BW["backward: only the student learns"]</pre>
-<pre class="code"><code class="language-python">class KDLoss(nn.Module):                                  # torch: a plain module, one number out
-    def __init__(self, temperature=4.0):
+<pre class="code"><code class="language-python">from torch import Tensor                                  # torch
+
+class KDLoss(nn.Module):                                  # torch: a plain module, one number out
+    def __init__(self, temperature: float = 4.0):
         super().__init__()
         self.t = temperature
 
-    def forward(self, student_logits, teacher_logits):    # argument order = binding's names
+    # argument order = binding's names
+    def forward(self, student_logits: Tensor, teacher_logits: Tensor) -> Tensor:
         s = F.log_softmax(student_logits / self.t, dim=-1)
         t = F.log_softmax(teacher_logits / self.t, dim=-1)
         return F.kl_div(s, t, log_target=True, reduction=&quot;batchmean&quot;) * self.t**2

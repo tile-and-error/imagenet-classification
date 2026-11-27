@@ -14,17 +14,17 @@ from lwfm.results.sinks import ConsoleSink, FileFormat, LocalFileSink, OutputSin
 FORMATS = ["json", "yaml", "csv"]
 
 
-def read_json(path: Path):
+def read_json(path: Path):  # noqa: ANN201
     return json.loads(path.read_text())
 
 
-def read_events(run_dir: Path):
+def read_events(run_dir: Path):  # noqa: ANN201
     return [
         json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()
     ]
 
 
-def test_manifest_and_running_status_are_written_on_creation(tmp_path: Path):
+def test_manifest_and_running_status_are_written_on_creation(tmp_path: Path) -> None:
     LocalFileSink(tmp_path / "run", manifest_fields={"seed": 42})
     manifest = read_json(tmp_path / "run" / "manifest.json")
     assert manifest["seed"] == 42
@@ -38,7 +38,7 @@ def test_manifest_and_running_status_are_written_on_creation(tmp_path: Path):
     assert read_json(tmp_path / "run" / "status.json")["status"] == "running"
 
 
-def test_events_are_on_disk_before_close(tmp_path: Path):
+def test_events_are_on_disk_before_close(tmp_path: Path) -> None:
     sink = LocalFileSink(tmp_path)
     sink.write(
         RunEvent("scalar", "train/loss/ce", torch.tensor(2.5), stage="fit", step=1)
@@ -49,7 +49,7 @@ def test_events_are_on_disk_before_close(tmp_path: Path):
     assert (event["stage"], event["step"]) == ("fit", 1)
 
 
-def test_dataclass_event_value_round_trips(tmp_path: Path):
+def test_dataclass_event_value_round_trips(tmp_path: Path) -> None:
     @dataclass(frozen=True)
     class Reference:
         kind: str
@@ -61,7 +61,7 @@ def test_dataclass_event_value_round_trips(tmp_path: Path):
     assert Reference(**read_events(tmp_path)[0]["value"]) == reference
 
 
-def test_summary_holds_last_value_of_each_scalar(tmp_path: Path):
+def test_summary_holds_last_value_of_each_scalar(tmp_path: Path) -> None:
     sink = LocalFileSink(tmp_path)
     for step, loss in enumerate([3.0, 2.0, 1.0]):
         sink.write(RunEvent("scalar", "train/loss/total", loss, step=step))
@@ -72,7 +72,7 @@ def test_summary_holds_last_value_of_each_scalar(tmp_path: Path):
     assert summary == {"train/loss/total": 1.0, "eval/val/top1": 0.5}
 
 
-def test_status_event_updates_status_file_with_traceback(tmp_path: Path):
+def test_status_event_updates_status_file_with_traceback(tmp_path: Path) -> None:
     sink = LocalFileSink(tmp_path)
     sink.write(RunEvent("message", "traceback", "Traceback ... boom"))
     sink.write(RunEvent("status", "status", "failed"))
@@ -81,13 +81,13 @@ def test_status_event_updates_status_file_with_traceback(tmp_path: Path):
     assert "boom" in status["traceback"]
 
 
-def test_existing_run_directory_is_refused(tmp_path: Path):
+def test_existing_run_directory_is_refused(tmp_path: Path) -> None:
     LocalFileSink(tmp_path)
     with pytest.raises(FileExistsError, match="already holds a run"):
         LocalFileSink(tmp_path)
 
 
-def test_no_temporary_files_are_left(tmp_path: Path):
+def test_no_temporary_files_are_left(tmp_path: Path) -> None:
     sink = LocalFileSink(tmp_path)
     sink.write(RunEvent("status", "status", "completed"))
     sink.close()
@@ -99,20 +99,20 @@ def test_no_temporary_files_are_left(tmp_path: Path):
     ]
 
 
-def test_non_json_value_fails_without_writing(tmp_path: Path):
+def test_non_json_value_fails_without_writing(tmp_path: Path) -> None:
     sink = LocalFileSink(tmp_path)
     with pytest.raises(TypeError, match="'weird'.*object is not JSON-safe"):
         sink.write(RunEvent("table", "weird", [object()]))
     assert read_events(tmp_path) == []
 
 
-def test_close_is_safe_to_call_twice(tmp_path: Path):
+def test_close_is_safe_to_call_twice(tmp_path: Path) -> None:
     sink = LocalFileSink(tmp_path)
     sink.close()
     sink.close()
 
 
-def read_events_as(run_dir: Path, file_format: FileFormat):
+def read_events_as(run_dir: Path, file_format: FileFormat):  # noqa: ANN201
     """The events file parsed back into dicts. CSV cells come back as strings."""
     if file_format == "json":
         return read_events(run_dir)
@@ -122,7 +122,7 @@ def read_events_as(run_dir: Path, file_format: FileFormat):
         return list(csv.DictReader(events_file))
 
 
-def read_summary_as(run_dir: Path, file_format: FileFormat):
+def read_summary_as(run_dir: Path, file_format: FileFormat):  # noqa: ANN201
     if file_format == "json":
         return read_json(run_dir / "summary.json")
     if file_format == "yaml":
@@ -134,7 +134,9 @@ def read_summary_as(run_dir: Path, file_format: FileFormat):
 
 
 @pytest.mark.parametrize("file_format", FORMATS)
-def test_events_round_trip_in_every_format(tmp_path: Path, file_format: FileFormat):
+def test_events_round_trip_in_every_format(
+    tmp_path: Path, file_format: FileFormat
+) -> None:
     sink = LocalFileSink(tmp_path, file_format=file_format)
     sink.write(
         RunEvent("scalar", "train/loss/ce", torch.tensor(2.5), stage="fit", step=1)
@@ -151,7 +153,7 @@ def test_events_round_trip_in_every_format(tmp_path: Path, file_format: FileForm
 
 
 @pytest.mark.parametrize("file_format", FORMATS)
-def test_summary_in_every_format(tmp_path: Path, file_format: FileFormat):
+def test_summary_in_every_format(tmp_path: Path, file_format: FileFormat) -> None:
     sink = LocalFileSink(tmp_path, file_format=file_format)
     for step, loss in enumerate([3.0, 1.0]):
         sink.write(RunEvent("scalar", "train/loss/total", loss, step=step))
@@ -171,12 +173,12 @@ def test_summary_in_every_format(tmp_path: Path, file_format: FileFormat):
 )
 def test_every_file_follows_the_format(
     tmp_path: Path, file_format: FileFormat, names: list[str]
-):
+) -> None:
     LocalFileSink(tmp_path, file_format=file_format).close()
     assert sorted(p.name for p in tmp_path.iterdir()) == names
 
 
-def read_record_as(path: Path, file_format: FileFormat):
+def read_record_as(path: Path, file_format: FileFormat):  # noqa: ANN201
     """A manifest or status file as a dict. CSV comes back flat, with dotted keys."""
     if file_format == "yaml":
         return yaml.safe_load(path.read_text())
@@ -185,7 +187,9 @@ def read_record_as(path: Path, file_format: FileFormat):
 
 
 @pytest.mark.parametrize("file_format", ["yaml", "csv"])
-def test_manifest_and_status_in_every_format(tmp_path: Path, file_format: FileFormat):
+def test_manifest_and_status_in_every_format(
+    tmp_path: Path, file_format: FileFormat
+) -> None:
     sink = LocalFileSink(
         tmp_path, manifest_fields={"seed": 42}, file_format=file_format
     )
@@ -204,13 +208,13 @@ def test_manifest_and_status_in_every_format(tmp_path: Path, file_format: FileFo
     assert status["traceback"] == "Traceback:\n  boom"  # multi-line survives CSV too
 
 
-def test_a_run_of_another_format_is_refused(tmp_path: Path):
+def test_a_run_of_another_format_is_refused(tmp_path: Path) -> None:
     LocalFileSink(tmp_path, file_format="csv")
     with pytest.raises(FileExistsError, match="already holds a run"):
         LocalFileSink(tmp_path, file_format="yaml")
 
 
-def test_unknown_format_fails_before_creating_anything(tmp_path: Path):
+def test_unknown_format_fails_before_creating_anything(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="file_format"):
         LocalFileSink(tmp_path / "run", file_format="xml")  # type: ignore[arg-type]
     assert not (tmp_path / "run").exists()
@@ -219,7 +223,7 @@ def test_unknown_format_fails_before_creating_anything(tmp_path: Path):
 @pytest.mark.parametrize("file_format", FORMATS)
 def test_bad_value_fails_without_writing_in_every_format(
     tmp_path: Path, file_format: FileFormat
-):
+) -> None:
     sink = LocalFileSink(tmp_path, file_format=file_format)
     with pytest.raises(TypeError, match="not JSON-safe"):
         sink.write(RunEvent("table", "weird", [object()]))
@@ -241,12 +245,12 @@ def test_bad_value_fails_without_writing_in_every_format(
     ],
     ids=["stage_and_step", "stage_only", "neither"],
 )
-def test_console_line_format(event: RunEvent, line: str):
+def test_console_line_format(event: RunEvent, line: str) -> None:
     stream = io.StringIO()
     ConsoleSink(stream).write(event)
     assert stream.getvalue() == line + "\n"
 
 
-def test_output_sink_is_abstract():
+def test_output_sink_is_abstract() -> None:
     with pytest.raises(TypeError):
         OutputSink()  # type: ignore[abstract]

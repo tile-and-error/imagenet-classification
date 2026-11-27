@@ -41,8 +41,12 @@ target-version = "py312"
 # UP = pyupgrade (Modern version code)
 # B = flake8-bugbear (Find Unexpected behaviour)
 # SIM = flake8-simplify (Reduce Code to Simpler forms)
+# ANN0, ANN2 = flake8-annotations (Missing parameter and return types)
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "UP", "B", "SIM", "ANN0", "ANN2"]
+
+[tool.ruff.lint.flake8-annotations]
+mypy-init-return = true  # __init__ needs no "-> None" once its parameters are annotated
 
 [tool.ruff.lint.isort]
 known-local-folder = ["conftest"]  # shared test helpers, imported by name
@@ -53,7 +57,9 @@ include = ["lwfm*"]
 
 [tool.pyright]
 typeCheckingMode = "standard"
-reportMissingParameterType = "error"
+strictDictionaryInference = true
+strictListInference = true
+strictSetInference = true
 
 [dependency-groups]
 dev = [

@@ -1,0 +1,59 @@
+# Still unanswered: Hyperparameter searches? Data passing between runs? Multiple runs per experiment?
+
+name:
+  NAME OF EXPERIMENT # QUESTION: Why not just use this as the output dir (root in output later in config)?
+  # Or something which is a function of this (e.g., include datetime)?
+seed: 42
+device: cuda
+models:
+  student: # node name; outputs are student.<write>
+    # All nodes require inputs and outputs, which are coalesced to Name | Sequence[Name] (as in building blocks)
+    inputs: inputs.image
+    outputs: logits
+    frozen: false # frozen makes more sense than pretrained in terms of objective
+    # Any other (potential parameters) should only be passed in through 'params'.
+    # Can be omitted if none, and coalesced to empty dictionary. Although, can just be forced to be explicit.
+    params:
+  teacher:
+    inputs: inputs.image
+    outputs: logits
+    frozen: true
+losses:
+  # Compared to smoke.yaml -- no 'type' field present.
+  ce:
+    # NOTE: inputs order matters
+    inputs: [student.logits, targets.class] # CrossEntropyLoss(input, target)
+    weight: 1.0
+metrics:
+  # The exact object is specified by the user in their own implementation, they may choose to do partial function application
+  # on some builder/constructor for variants. e.g., top1 and top5 could be something like partial(TopK, k=1) and partial(TopK, k=5)
+  top1: # this will be the string name in the mapping
+    inputs: [student.logits, targets.class] # currently ordering matters -- update(preds, target)
+    kwargs:
+      # These should be explicitly visible from the actual factory method. They should match *exactly* (no defaults).
+      # This forces experiment to be created with exact tweaked parameters in mind.
+      # num_classes: 10  # this is likely a fixed part of the experiment
+      average: micro
+  top5:
+    inputs: [student.logits, targets.class]
+    kwargs:
+      average: micro
+training:
+  optimizer: { name: sgd, lr: 0.01 }
+  max_epochs: 1
+  max_steps: 2
+  scheduler:
+    name: cosine_annealing_lr
+    interval: step
+recipe:
+  stages:
+    - { name: fit, type: fit }
+    - { name: eval_val, type: evaluate, split: val }
+    - { name: bench, type: benchmark, warmup: 2, repeats: 5, batch_size: 1 }
+outputs:
+  root: run_outputs # $(cwd)/run_outputs -- on local runs this would be just wherever you run the code from
+  sinks: # local, console, plot
+    local:
+    sink:
+deployed_nodes:
+  student_ema:

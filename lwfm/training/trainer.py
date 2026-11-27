@@ -327,7 +327,7 @@ class Trainer:
         scheduler: LRScheduler | None,
         scheduler_interval: SchedulerInterval | None,
         callbacks: Sequence[Callback],
-    ) -> dict[str, object]:
+    ):
         """Everything needed to reproduce or compare this run, as JSON-safe values."""
         return {
             "device": str(self.device),
@@ -372,18 +372,21 @@ def seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
 
 
-def qualified_name(function: Callable) -> str:
+def qualified_name(function: StepFn) -> str:
     """e.g. `lwfm.training.steps.default_step`."""
     module = getattr(function, "__module__", None)
     name = getattr(function, "__qualname__", type(function).__name__)
     return f"{module}.{name}" if module else name
 
 
-def json_safe_values(settings: dict[str, object]) -> dict[str, object]:
+type JsonScalar = bool | int | float | str | None
+
+
+def json_safe_values(settings) -> dict[str, JsonScalar | list[JsonScalar]]:
     """The entries whose values are plain numbers, strings, booleans or None, or
     lists or tuples of them; anything else (e.g. a tensor learning rate) is left out."""
     plain_types = (bool, int, float, str, type(None))
-    kept: dict[str, object] = {}
+    kept: dict[str, JsonScalar | list[JsonScalar]] = {}
     for key, value in settings.items():
         if isinstance(value, plain_types):
             kept[key] = value

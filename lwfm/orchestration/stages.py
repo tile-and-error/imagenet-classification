@@ -135,7 +135,7 @@ def save_checkpoint(
     epoch: int,
     global_step: int,
     deployable_name: str,
-):
+) -> None:
     checkpoint = {
         "model_state_dict": graph.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),

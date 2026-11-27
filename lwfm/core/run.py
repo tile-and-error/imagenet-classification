@@ -5,7 +5,7 @@ from lwfm.core.yaml import load_yaml_config
 from lwfm.orchestration.experiment import Experiment
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="LWFM Experiment Runner")
 
     parser.add_argument(

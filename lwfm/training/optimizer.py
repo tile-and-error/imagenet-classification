@@ -1,9 +1,13 @@
 from collections.abc import Iterable
 
 import torch
+from torch.optim.lr_scheduler import LRScheduler
 
 
-def build_optimizer(parameters: Iterable[torch.nn.Parameter], config):
+def build_optimizer(
+    parameters: Iterable[torch.nn.Parameter],
+    config,  # noqa: ANN001
+) -> torch.optim.Optimizer:
     optimizer_registry = {"sgd": torch.optim.SGD}
 
     optimizer_name = config["name"]
@@ -20,8 +24,11 @@ def build_optimizer(parameters: Iterable[torch.nn.Parameter], config):
 
 
 def build_scheduler(
-    config, optimizer: torch.optim.Optimizer, epochs: int, train_len: int
-):
+    config,  # noqa: ANN001
+    optimizer: torch.optim.Optimizer,
+    epochs: int,
+    train_len: int,
+) -> LRScheduler:
     scheduler_registry = {
         "cosine_annealing_lr": torch.optim.lr_scheduler.CosineAnnealingLR
     }

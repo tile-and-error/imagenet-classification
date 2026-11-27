@@ -6,7 +6,7 @@ from lwfm.core.types import Batch
 
 
 @pytest.fixture
-def batch():
+def batch() -> Batch:
     return {
         "inputs": {"image": torch.rand(2, 3, 4, 4)},
         "targets": {"class": torch.tensor([0, 1])},
@@ -14,13 +14,13 @@ def batch():
     }
 
 
-def test_resolves_batch_values(batch: Batch):
+def test_resolves_batch_values(batch: Batch) -> None:
     assert resolve("inputs.image", batch, {}) is batch["inputs"]["image"]
     assert resolve("targets.class", batch, {}) is batch["targets"]["class"]
     assert resolve("meta.sample_id", batch, {}) == ["a", "b"]
 
 
-def test_resolves_node_outputs(batch: Batch):
+def test_resolves_node_outputs(batch: Batch) -> None:
     logits = torch.zeros(2, 5)
     assert resolve("student.logits", batch, {"student.logits": logits}) is logits
 
@@ -29,12 +29,12 @@ def test_resolves_node_outputs(batch: Batch):
 @pytest.mark.parametrize(
     "name", ["inputs.imgae", "studnet.logits", "inputs", "batch.inputs.image"]
 )
-def test_unknown_name_is_in_the_error(batch: Batch, name: str):
+def test_unknown_name_is_in_the_error(batch: Batch, name: str) -> None:
     with pytest.raises(UnknownNameError, match=name.replace(".", r"\.")):
         resolve(name, batch, {"student.logits": torch.zeros(2, 5)})
 
 
-def test_resolve_all_keeps_order(batch: Batch):
+def test_resolve_all_keeps_order(batch: Batch) -> None:
     logits = torch.zeros(2, 5)
     values = resolve_all(
         ["student.logits", "targets.class"], batch, {"student.logits": logits}
@@ -43,6 +43,6 @@ def test_resolve_all_keeps_order(batch: Batch):
     assert values[1] is batch["targets"]["class"]
 
 
-def test_as_list_accepts_one_name_or_many():
+def test_as_list_accepts_one_name_or_many() -> None:
     assert as_list("inputs.image") == ["inputs.image"]
     assert as_list(("a.y", "b.y")) == ["a.y", "b.y"]

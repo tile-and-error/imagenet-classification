@@ -42,19 +42,21 @@
   <tr><td>a change to a trained model (prune, quantise)</td><td>a <code class="l">ModelTransform</code></td><td>a transform stage</td><td class="todo">planned</td></tr>
 </table>
 <h3>Example: a new sink and a new loss</h3>
-<pre class="code"><code class="language-python">from lwfm.results.sinks import OutputSink        # lwfm interface (an abstract base class)
+<pre class="code"><code class="language-python">from torch import Tensor                         # torch
+from lwfm.results.events import RunEvent         # lwfm
+from lwfm.results.sinks import OutputSink        # lwfm interface (an abstract base class)
 
 class ListSink(OutputSink):                      # must define both methods,
-    def __init__(self):                          # or Python refuses to create it
-        self.events = []
+    def __init__(self) -> None:                  # or Python refuses to create it
+        self.events: list[RunEvent] = []
 
-    def write(self, event):
+    def write(self, event: RunEvent) -> None:
         self.events.append(event)
 
-    def close(self):
+    def close(self) -> None:
         pass
 
-def logit_penalty(logits):                       # a plain function is a valid loss
+def logit_penalty(logits: Tensor) -> Tensor:     # a plain function is a valid loss
     return logits.pow(2).mean()                  # torch: returns one number
 
 loss_fn = LossComposer([
