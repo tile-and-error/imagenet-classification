@@ -2,7 +2,7 @@ import pytest
 import torch
 from torch import nn
 
-from lwfm.core.losses import LossBinding, LossComposer
+from lwfm.loss.losses import LossBinding, LossComposer
 
 from conftest import CE_READS
 

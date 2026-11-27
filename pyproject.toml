@@ -50,3 +50,7 @@ known-local-folder = ["conftest"]  # shared test helpers, imported by name
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["lwfm*"]
+
+[tool.pyright]
+typeCheckingMode = "standard"
+reportMissingParameterType = "error"

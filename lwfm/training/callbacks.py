@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Literal
 
 import torch
 
-from lwfm.core.losses import LossBinding
+from lwfm.loss.losses import LossBinding
 from lwfm.core.types import Batch
 from lwfm.results.artifacts import save_artifact
 

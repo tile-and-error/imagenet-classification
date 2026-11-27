@@ -17,7 +17,9 @@ NAME_MAP = {
 # Get Jinja Templates
 largepath = sys.argv[2]
 template_path = largepath + "/lwfm/integrations/slurm/templates/"
-env = Environment(loader=FileSystemLoader(template_path), autoescape=select_autoescape())
+env = Environment(
+    loader=FileSystemLoader(template_path), autoescape=select_autoescape()
+)
 
 # Load script arguments
 system = sys.argv[1]

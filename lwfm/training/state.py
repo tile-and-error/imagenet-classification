@@ -8,7 +8,7 @@ from torch.amp.grad_scaler import GradScaler
 from torch.optim.lr_scheduler import LRScheduler
 
 from lwfm.core.graph import ExecutionGraph
-from lwfm.core.losses import LossComposer
+from lwfm.loss.losses import LossComposer
 from lwfm.results.sinks import OutputSink
 
 if TYPE_CHECKING:

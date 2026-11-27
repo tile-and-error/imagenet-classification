@@ -11,7 +11,7 @@ from torchmetrics import MeanMetric
 from torchmetrics.classification import MulticlassAccuracy
 
 from lwfm.core.graph import ExecutionGraph, ModelNode
-from lwfm.core.losses import LossBinding, LossComposer
+from lwfm.loss.losses import LossBinding, LossComposer
 from lwfm.evaluation.metrics import MetricBinding
 from lwfm.results.sinks import OutputSink
 

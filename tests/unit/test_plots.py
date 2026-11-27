@@ -2,7 +2,7 @@ import torch
 from torch import nn
 
 from lwfm.core.graph import ExecutionGraph, ModelNode
-from lwfm.core.losses import LossBinding, LossComposer
+from lwfm.loss.losses import LossBinding, LossComposer
 from lwfm.evaluation.metrics import CurveBinding
 from lwfm.results.curves import ConfusionMatrix, Lines, PRCurve, ROCCurve
 from lwfm.results.events import RunEvent

@@ -6,10 +6,10 @@ import torch
 
 from lwfm.core.config import ExperimentConfig
 from lwfm.core.graph import ExecutionGraph
-from lwfm.core.lossfactory import build_loss_composer
+from lwfm.loss.lossfactory import build_loss_composer
 from lwfm.data.factory import build_data_module
 from lwfm.evaluation.evaluator import Evaluator
-from lwfm.evaluation.factory import build_metric_binding
+from lwfm.evaluation.factory import build_metric_bindings
 from lwfm.models.factory import build_model
 from lwfm.orchestration.recipe import Recipe
 from lwfm.orchestration.runcontext import RunContext
@@ -54,7 +54,7 @@ class Experiment:
             OutputRouter(build_routers(config.outputs, output_dir)),
             build_data_module(config.data, config.seed),
             build_loss_composer(config.losses),
-            build_metric_binding(config.metrics),
+            build_metric_bindings(config.metrics),
             time_utc,
         )
 
@@ -114,15 +114,17 @@ def build_routers(outputs, file_dir):
             raise ValueError("Incorrect Router Type")
 
 
+STAGE_TYPES = {
+    "fit": FitStage,
+    "evaluate": EvaluateStage,
+    "benchmark": BenchmarkStage
+}
+
 def build_stage(stage):
-    if stage["type"] == "fit":
-        return FitStage()
-    elif stage["type"] == "evaluate":
-        return EvaluateStage()
-    elif stage["type"] == "benchmark":
-        return BenchmarkStage()
+    if stage["type"] not in STAGE_TYPES:
+        raise ValueError(f"Incorrect stage type {stage["type"]}")
     else:
-        raise ValueError("Incorrect Stage Type")
+        return STAGE_TYPES[stage["type"]]()
 
 
 def build_recipe(recipe):

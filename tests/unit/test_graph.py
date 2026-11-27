@@ -3,7 +3,7 @@ import torch
 from torch import Tensor, nn
 
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
-from lwfm.core.losses import LossBinding
+from lwfm.loss.losses import LossBinding
 
 
 class Scale(nn.Module):

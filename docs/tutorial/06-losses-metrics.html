@@ -25,7 +25,7 @@
 
 <p class="lead">A <strong>binding</strong> pairs a normal loss or metric with the names of the values it reads.</p>
 <pre class="code"><code class="language-python">import torch
-from lwfm.core.losses import LossBinding, LossComposer   # lwfm
+from lwfm.loss.losses import LossBinding, LossComposer   # lwfm
 
 loss_fn = LossComposer([                                  # lwfm: adds up all its losses
     LossBinding(&quot;ce&quot;, nn.CrossEntropyLoss(),              # torch: the loss, unchanged

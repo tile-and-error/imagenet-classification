@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 from lwfm.core.graph import ExecutionGraph, ModelNode
-from lwfm.core.losses import LossBinding, LossComposer
+from lwfm.loss.losses import LossBinding, LossComposer
 from lwfm.results.router import OutputRouter
 from lwfm.results.sinks import LocalFileSink
 from lwfm.training import Callback, Trainer, TrainingResult, TrainingState

@@ -11,7 +11,7 @@ from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
 from lwfm.core.batch import to_device
 from lwfm.core.graph import ExecutionGraph
-from lwfm.core.losses import LossComposer
+from lwfm.loss.losses import LossComposer
 from lwfm.core.types import Batch
 from lwfm.evaluation.evaluator import EvaluationResult, Evaluator
 from lwfm.evaluation.metrics import CurveBinding, MetricBinding
