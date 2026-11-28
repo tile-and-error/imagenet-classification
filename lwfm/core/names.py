@@ -14,7 +14,7 @@ class UnknownNameError(KeyError):
     """
 
 
-def resolve(value_name: Name, batch: Batch, node_outputs: dict[Name, Tensor]):
+def resolve(value_name: Name, batch: Batch, node_outputs: dict[Name, Tensor]) -> Tensor:
     """Look up a name: a node output (`student.logits`) first, else a batch value
     (`targets.class`, where the part before the first `.` is one of `BATCH_GROUPS`).
     Raises `UnknownNameError` if it is neither.
@@ -31,7 +31,7 @@ def resolve(value_name: Name, batch: Batch, node_outputs: dict[Name, Tensor]):
 
 def resolve_all(
     value_names: Sequence[Name], batch: Batch, node_outputs: dict[Name, Tensor]
-):
+) -> list[Tensor]:
     """Resolves a list of names, see docs on resolve()."""
     return [resolve(name, batch, node_outputs) for name in value_names]
 
@@ -45,7 +45,7 @@ def as_list(one_or_many_names: Name | Sequence[Name]) -> list[Name]:
     return list(one_or_many_names)
 
 
-def describe_values(value_names: Sequence[Name], values) -> str:
+def describe_values(value_names: Sequence[Name], values: Sequence[object]) -> str:
     """Describes values for use in error notes, for example:
     `"student.logits (8, 10), targets.class (8,)"`
     """

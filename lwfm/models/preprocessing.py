@@ -2,7 +2,7 @@ from torch import nn
 from torchvision.transforms import v2
 
 
-def build_preprocessing(config) -> list[nn.Module]:
+def build_preprocessing(config: dict) -> list[nn.Module]:
     preprocessing: list[nn.Module] = []
 
     if "resize" in config:

@@ -1,10 +1,9 @@
-from torch import nn
 from torchmetrics import Metric
 from torchmetrics.classification import MulticlassAccuracy
 
 from lwfm.evaluation.metrics import MetricBinding
 
-METRICS = {"cross_entropy": nn.CrossEntropyLoss, "topk_accuracy": MulticlassAccuracy}
+METRICS: dict[str, type[Metric]] = {"topk_accuracy": MulticlassAccuracy}
 
 
 def build_metric(metric) -> Metric:  # noqa: ANN001

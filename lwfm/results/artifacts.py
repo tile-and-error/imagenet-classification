@@ -1,4 +1,5 @@
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from lwfm.results.events import RunEvent
@@ -8,7 +9,7 @@ from lwfm.results.sinks import OutputSink
 def save_artifact(
     run_dir: str | Path,
     relative_path: str | Path,
-    write,
+    write: Callable[[Path], None],
     output_sink: OutputSink | None,
     *,
     name: str,

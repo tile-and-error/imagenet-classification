@@ -4,6 +4,7 @@ import json
 import os
 import sys
 from abc import ABC, abstractmethod
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, fields, is_dataclass
 from pathlib import Path
 from typing import Literal, TextIO, cast, get_args
@@ -38,7 +39,7 @@ class OutputSink(ABC):
     def close(self) -> None: ...
 
 
-def _json_default(unencodable_value):
+def _json_default(unencodable_value: object) -> object:
     """This converts a non-standard object into a JSON representation."""
     if is_dataclass(unencodable_value) and not isinstance(unencodable_value, type):
         return asdict(unencodable_value)
@@ -62,14 +63,14 @@ def write_text_atomic(target_path: Path, text: str) -> None:
     os.replace(temp_path, target_path)  # readers never see a half-written file
 
 
-def csv_row(cells) -> str:
+def csv_row(cells: Iterable[object]) -> str:
     """One CSV line, quoted as needed (e.g. a traceback spanning several lines)."""
     buffer = io.StringIO()
     csv.writer(buffer, lineterminator="\n").writerow(cells)
     return buffer.getvalue()
 
 
-def csv_cell(value):
+def csv_cell(value: object) -> object:
     # Numbers and strings as they are; nested values (a table's rows, a dataclass)
     # as JSON text; None as an empty cell
     if value is None:
@@ -91,7 +92,7 @@ def format_event(event: RunEvent, file_format: FileFormat) -> str:
     return csv_row(csv_cell(record[field]) for field in EVENT_FIELDS)
 
 
-def flatten(record, prefix: str = ""):
+def flatten(record: Mapping[str, object], prefix: str = "") -> dict[str, object]:
     """Nested dicts as dotted keys: {"environment": {"torch": "2.9"}} becomes
     {"environment.torch": "2.9"}."""
     flat: dict[str, object] = {}
@@ -103,7 +104,9 @@ def flatten(record, prefix: str = ""):
     return flat
 
 
-def format_record(record, file_format: FileFormat, key_header: str = "key") -> str:
+def format_record(
+    record: Mapping[str, object], file_format: FileFormat, key_header: str = "key"
+) -> str:
     """The text of a whole-file record (manifest, status, summary). CSV has no
     nesting, so it gets one `key,value` row per flattened entry."""
     json_text = json.dumps(record, indent=2, default=_json_default)
@@ -136,7 +139,7 @@ class LocalFileSink(OutputSink):
     def __init__(
         self,
         run_dir: str | Path,
-        manifest_fields=None,
+        manifest_fields: Mapping[str, object] | None = None,
         file_format: FileFormat = "json",
     ):
         if file_format not in FILE_FORMATS:
@@ -191,7 +194,9 @@ class LocalFileSink(OutputSink):
             status_record["traceback"] = self._failure_traceback
         self._write_record("status", status_record)
 
-    def _write_record(self, stem: str, record, key_header: str = "key") -> None:
+    def _write_record(
+        self, stem: str, record: Mapping[str, object], key_header: str = "key"
+    ) -> None:
         # Written to a temporary file, then renamed: never seen half-written
         write_text_atomic(
             self.run_dir / f"{stem}.{self.file_format}",

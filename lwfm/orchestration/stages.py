@@ -85,7 +85,15 @@ class FitStage(Stage):
             "model": str(ctx.output_dir / "artifacts/model_weights.pt"),
         }
 
-        return StageResult(artefacts, result, "completed")
+        return StageResult(
+            artefacts,
+            {
+                "global_step": result.global_step,
+                "epochs_completed": result.epochs_completed,
+                "stop_reason": result.stop_reason,
+            },
+            "completed",
+        )
 
 
 class EvaluateStage(Stage):

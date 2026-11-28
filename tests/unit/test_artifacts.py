@@ -18,7 +18,7 @@ def test_the_file_is_saved_then_recorded_with_a_relative_path(
     path = save_artifact(
         tmp_path,
         "notes/a.txt",
-        lambda target: target.write_text("hello"),
+        lambda target: target.write_text("hello"),  # pyright:ignore
         sink,
         name="note/a",
         step=3,
@@ -46,7 +46,11 @@ def test_a_failed_write_keeps_the_old_file_and_records_nothing(
     tmp_path: Path, sink: ListSink
 ) -> None:
     save_artifact(
-        tmp_path, "a.txt", lambda target: target.write_text("old"), None, name="a"
+        tmp_path,
+        "a.txt",
+        lambda target: target.write_text("old"),  # pyright:ignore
+        None,
+        name="a",
     )
 
     def fail(target: Path) -> NoReturn:
