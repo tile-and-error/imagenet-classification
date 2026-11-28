@@ -9,7 +9,7 @@ from lwfm.results.sinks import OutputSink
 def save_artifact(
     run_dir: str | Path,
     relative_path: str | Path,
-    write: Callable[[Path], object],
+    write: Callable[[Path], None],
     output_sink: OutputSink | None,
     *,
     name: str,

@@ -1,8 +1,10 @@
 import pytest
 import torch
-from torch import nn
+from torch import Tensor, nn
 
+from lwfm.core.types import Batch
 from lwfm.training import Callback, StepOutput, Trainer
+from lwfm.training.state import TrainingState
 from lwfm.training.steps import backward, forward_and_loss
 
 from conftest import K, batches, setup
@@ -11,29 +13,29 @@ from conftest import K, batches, setup
 class RecordsDtype(nn.Module):
     """A linear model that remembers the dtype its output was computed in."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.linear = nn.Linear(12, K)
         self.dtypes = []
 
-    def forward(self, image):
+    def forward(self, image: Tensor) -> Tensor:
         out = self.linear(image.flatten(1))
         self.dtypes.append(out.dtype)
         return out
 
 
 class CountSteps(Callback):
-    def __init__(self):
+    def __init__(self) -> None:
         self.optimizer_steps = 0
 
-    def on_after_optimizer_step(self, state):
+    def on_after_optimizer_step(self, state: TrainingState) -> None:
         self.optimizer_steps += 1
 
 
 # --- gradient accumulation ------------------------------------------------------
 
 
-def test_accumulation_steps_every_k_batches_and_at_epoch_end():
+def test_accumulation_steps_every_k_batches_and_at_epoch_end() -> None:
     # 5 batches with k = 2: groups of 2, 2 and a final partial group of 1
     node, graph, loss, _ = setup()
     counter = CountSteps()
@@ -47,14 +49,14 @@ def test_accumulation_steps_every_k_batches_and_at_epoch_end():
     assert result.global_step == counter.optimizer_steps == 6
 
 
-def test_max_steps_counts_optimizer_steps_not_batches():
+def test_max_steps_counts_optimizer_steps_not_batches() -> None:
     # k = 2, so 3 optimizer steps take 6 of the 10 batches
     class CountBatches(CountSteps):
-        def __init__(self):
+        def __init__(self) -> None:
             super().__init__()
             self.batches = 0
 
-        def on_step_start(self, state, batch):
+        def on_step_start(self, state: TrainingState, batch: Batch) -> None:
             self.batches += 1
 
     node, graph, loss, _ = setup()
@@ -70,7 +72,7 @@ def test_max_steps_counts_optimizer_steps_not_batches():
     assert counter.batches == 6
 
 
-def test_accumulating_two_halves_equals_one_full_batch():
+def test_accumulating_two_halves_equals_one_full_batch() -> None:
     # Mean loss over 8 samples = average of the mean losses of its two halves of 4
     data = batches(2, batch_size=4)
     full = {
@@ -92,7 +94,7 @@ def test_accumulating_two_halves_equals_one_full_batch():
 # --- clipping and precision -----------------------------------------------------
 
 
-def test_gradient_clipping_bounds_the_update():
+def test_gradient_clipping_bounds_the_update() -> None:
     # Plain SGD with lr = 1 moves the weights by exactly the clipped gradient
     node, graph, loss, _ = setup()
     before = torch.cat([p.detach().flatten().clone() for p in node.parameters()])
@@ -103,7 +105,7 @@ def test_gradient_clipping_bounds_the_update():
     assert (after - before).norm() <= 1e-3 * (1 + 1e-4)
 
 
-def test_bf16_runs_the_forward_pass_under_autocast():
+def test_bf16_runs_the_forward_pass_under_autocast() -> None:
     module = RecordsDtype()
     node, graph, loss, _ = setup(module=module)
     Trainer(device="cpu", max_steps=2, precision="bf16").fit(
@@ -113,11 +115,11 @@ def test_bf16_runs_the_forward_pass_under_autocast():
     assert all(p.dtype == torch.float32 for p in node.parameters())  # weights stay fp32
 
 
-def test_fp16_uses_a_grad_scaler_and_trains():
+def test_fp16_uses_a_grad_scaler_and_trains() -> None:
     scalers = []
 
     class RecordScaler(Callback):
-        def on_fit_start(self, state):
+        def on_fit_start(self, state: TrainingState) -> None:
             scalers.append(state.scaler)
 
     node, graph, loss, _ = setup()
@@ -138,7 +140,7 @@ def test_fp16_uses_a_grad_scaler_and_trains():
 # --- custom steps ---------------------------------------------------------------
 
 
-def manual_step(state, batch):
+def manual_step(state: TrainingState, batch: Batch) -> StepOutput:
     """A custom step that calls .backward() itself instead of the helpers."""
     total, terms = forward_and_loss(state, batch)
     total.backward()
@@ -147,7 +149,7 @@ def manual_step(state, batch):
     return StepOutput(total.detach(), terms)
 
 
-def test_custom_step_works_in_plain_fp32():
+def test_custom_step_works_in_plain_fp32() -> None:
     node, graph, loss, _ = setup()
     result = Trainer(device="cpu", max_steps=3, step_fn=manual_step).fit(
         graph, batches(3), loss, torch.optim.SGD(node.parameters(), lr=0.1)
@@ -155,9 +157,9 @@ def test_custom_step_works_in_plain_fp32():
     assert result.global_step == 3
 
 
-def test_a_step_that_stops_using_the_helpers_is_refused():
+def test_a_step_that_stops_using_the_helpers_is_refused() -> None:
     # Helpers on the first batch only: every later step must be checked too
-    def helpers_once(state, batch):
+    def helpers_once(state: TrainingState, batch: Batch) -> StepOutput:
         if state.global_step == 0 and state.accumulated == 1:
             total, terms = forward_and_loss(state, batch)
             backward(state, total)
@@ -175,7 +177,7 @@ def test_a_step_that_stops_using_the_helpers_is_refused():
 @pytest.mark.parametrize(
     "settings", [{"precision": "fp16"}, {"accumulate_grad_batches": 2}]
 )
-def test_custom_step_without_helpers_is_refused_when_they_matter(settings):
+def test_custom_step_without_helpers_is_refused_when_they_matter(settings) -> None:  # noqa: ANN001
     node, graph, loss, _ = setup()
     trainer = Trainer(device="cpu", max_steps=3, step_fn=manual_step, **settings)
     with pytest.raises(RuntimeError, match="steps.backward"):

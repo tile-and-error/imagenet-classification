@@ -1,7 +1,8 @@
 import random
 import time
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from functools import partial
+from math import isfinite
 
 import numpy as np  # a torchvision dependency, so always installed
 import torch
@@ -11,10 +12,10 @@ from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
 from lwfm.core.batch import to_device
 from lwfm.core.graph import ExecutionGraph
-from lwfm.core.losses import LossComposer
 from lwfm.core.types import Batch
 from lwfm.evaluation.evaluator import EvaluationResult, Evaluator
 from lwfm.evaluation.metrics import CurveBinding, MetricBinding
+from lwfm.loss.losses import LossComposer
 from lwfm.results.events import RunEvent
 from lwfm.results.sinks import OutputSink
 from lwfm.training.callbacks import Callback, check_callbacks
@@ -30,6 +31,9 @@ from lwfm.training.state import (
 from lwfm.training.steps import AUTOCAST_DTYPES, default_step
 
 type StepFn = Callable[[TrainingState, Batch], StepOutput]
+type JsonScalar = None | bool | int | float | str
+type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
+type JsonObject = dict[str, JsonValue]
 
 
 class Trainer:
@@ -327,7 +331,7 @@ class Trainer:
         scheduler: LRScheduler | None,
         scheduler_interval: SchedulerInterval | None,
         callbacks: Sequence[Callback],
-    ) -> dict[str, object]:
+    ) -> JsonObject:
         """Everything needed to reproduce or compare this run, as JSON-safe values."""
         return {
             "device": str(self.device),
@@ -372,25 +376,41 @@ def seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
 
 
-def qualified_name(function: Callable) -> str:
+def qualified_name(function: StepFn) -> str:
     """e.g. `lwfm.training.steps.default_step`."""
     module = getattr(function, "__module__", None)
     name = getattr(function, "__qualname__", type(function).__name__)
     return f"{module}.{name}" if module else name
 
 
-def json_safe_values(settings: dict[str, object]) -> dict[str, object]:
-    """The entries whose values are plain numbers, strings, booleans or None, or
-    lists or tuples of them; anything else (e.g. a tensor learning rate) is left out."""
-    plain_types = (bool, int, float, str, type(None))
-    kept: dict[str, object] = {}
+def to_json_value(value: object) -> JsonValue:
+    """Convert a plain Python value to a value permitted by standard JSON."""
+    if value is None or isinstance(value, bool | int | str):
+        return value
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise TypeError("JSON does not permit NaN or infinity")
+        return value
+    if isinstance(value, Mapping):
+        result: JsonObject = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError("JSON object keys must be strings")
+            result[key] = to_json_value(item)
+        return result
+    if isinstance(value, list | tuple):
+        return [to_json_value(item) for item in value]
+    raise TypeError(f"{type(value).__name__} is not JSON-safe")
+
+
+def json_safe_values(settings: Mapping[str, object]) -> JsonObject:
+    """Keep entries convertible to standard JSON, omitting unsupported values."""
+    kept: JsonObject = {}
     for key, value in settings.items():
-        if isinstance(value, plain_types):
-            kept[key] = value
-        elif isinstance(value, list | tuple) and all(
-            isinstance(item, plain_types) for item in value
-        ):
-            kept[key] = list(value)
+        try:
+            kept[key] = to_json_value(value)
+        except TypeError:
+            continue
     return kept
 
 

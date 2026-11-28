@@ -10,9 +10,9 @@ From the repository root:
    ```bash
    uv venv
    ```
-2. **Install the requirements** from `requirements.txt` into it:
+2. **Install the dependencies** pinned in `uv.lock`, plus the dev tools (`pyright`):
    ```bash
-   uv pip install -r requirements.txt
+   uv sync
    ```
 3. **Activate the virtual environment:**
 
@@ -33,10 +33,10 @@ From the repository root:
 5. **(Optional) Install the notebook kernel** to run the notebooks in `examples/`:
 
    ```bash
-   uv sync --extra examples --inexact
+   uv sync --extra examples
    ```
 
-   This installs the project's dependencies from `pyproject.toml` plus `ipykernel` (the `examples` extra), so `.venv` can be picked as the kernel in Jupyter or VS Code. `--inexact` keeps the packages from step 2, which `uv sync` would otherwise remove.
+   This adds `ipykernel` (the `examples` extra) to the packages from step 2, so `.venv` can be picked as the kernel in Jupyter or VS Code.
 
 # Datasets
 

@@ -5,11 +5,11 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Edit|Write",
+        "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *.py) ruff format \"$f\" >/dev/null 2>&1; ruff check --fix \"$f\" 1>&2 || exit 2 ;; esac"
+            "command": "f=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // empty'); r=0; case \"$f\" in *.py) ruff format \"$f\" >/dev/null 2>&1; ruff check --fix \"$f\" 1>&2 || r=2; pyright \"$f\" 1>&2 || r=2 ;; *.ipynb) ruff format \"$f\" >/dev/null 2>&1; ruff check --fix \"$f\" 1>&2 || r=2 ;; esac; exit $r"
           }
         ]
       }
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "pytest -q 1>&2; c=$?; [ $c -eq 5 ] && exit 0; [ $c -ne 0 ] && exit 2; exit 0"
+            "command": "r=0; ruff check -q . 1>&2 || r=2; ruff format --check -q . 1>&2 || r=2; pytest -q 1>&2; c=$?; [ $c -ne 0 ] && [ $c -ne 5 ] && r=2; exit $r"
           }
         ]
       }

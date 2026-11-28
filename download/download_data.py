@@ -22,7 +22,12 @@ import pyarrow.parquet as pq
 from huggingface_hub import HfApi, hf_hub_download
 
 
-def download_hf_parquet(out: Path, expected: dict, repo: str, splits: list) -> None:
+def download_hf_parquet(
+    out: Path,
+    expected: dict[str, tuple[int, int]],
+    repo: str,
+    splits: list[tuple[str, str]],
+) -> None:
     """Download a Hugging Face parquet dataset one file at a time into
     <out>/<split>/<label>/.
 
@@ -69,7 +74,7 @@ def download_hf_parquet(out: Path, expected: dict, repo: str, splits: list) -> N
     shutil.rmtree(tmp, ignore_errors=True)
 
 
-def download_imagenet_1k(out: Path, expected: dict) -> None:
+def download_imagenet_1k(out: Path, expected: dict[str, tuple[int, int]]) -> None:
     """
     train <- official training set
     test <- official 50k validation set
@@ -87,7 +92,7 @@ def download_imagenet_1k(out: Path, expected: dict) -> None:
     )
 
 
-def download_tiny_imagenet(out: Path, expected: dict) -> None:
+def download_tiny_imagenet(out: Path, expected: dict[str, tuple[int, int]]) -> None:
     """
     200-class, 64x64 subset of ImageNet (~160 MB). Useful for testing this script.
 
@@ -117,7 +122,7 @@ DATASETS = {
 }
 
 
-def check(out: Path, expected: dict) -> bool:
+def check(out: Path, expected: dict[str, tuple[int, int]]) -> bool:
     """Compare class and image counts per split with what the dataset should have."""
     ok = True
     for split, (n_classes, n_images) in expected.items():

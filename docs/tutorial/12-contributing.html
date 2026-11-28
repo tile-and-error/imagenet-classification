@@ -26,8 +26,8 @@
 <h3>Set up and check everything works</h3>
 <pre class="code"><code class="language-bash">uv sync --extra examples --inexact      # install, plus the notebook kernel
 uv run pytest -q                        # all tests (CPU only, a few seconds)
-uv run ruff format . && uv run ruff check .
-uv run --with pyright pyright lwfm      # type check</code></pre>
+uv run ruff format . && uv run ruff check .   # format, lint, every annotation present
+uv run pyright                          # type check: annotations are correct</code></pre>
 
 <h3>Where things are</h3>
 <table>
@@ -45,6 +45,7 @@ uv run --with pyright pyright lwfm      # type check</code></pre>
 <ol>
   <li>Find its place on <a href="10-interfaces.html">slide 10</a>. Don't add a new mechanism if an existing one fits.</li>
   <li>Write it as a plain PyTorch module or function, or a subclass of the matching lwfm interface.</li>
+  <li>Annotate every parameter and return type, tests included: <code>ruff</code> fails on a missing one and <code>pyright</code> checks they are right. If the honest type is only <code>dict[str, Any]</code>, leave it out and mark the line <code># noqa: ANN001</code> (or <code>ANN201</code> for a return) until a proper type exists.</li>
   <li>Add tests: one that it works, one that it fails clearly when misused.</li>
   <li>Add a runnable example to the notebook. If it isn't runnable yet, it stays in <code>PLAN.md</code>.</li>
   <li>Check the existing examples and tests still pass unchanged.</li>

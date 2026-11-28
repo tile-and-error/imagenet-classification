@@ -1,0 +1,26 @@
+from torchmetrics import Metric
+from torchmetrics.classification import MulticlassAccuracy
+
+from lwfm.evaluation.metrics import MetricBinding
+
+METRICS: dict[str, type[Metric]] = {"topk_accuracy": MulticlassAccuracy}
+
+
+def build_metric(metric) -> Metric:  # noqa: ANN001
+    metric_type = metric["type"]
+
+    if metric_type not in METRICS:
+        raise ValueError(f"{metric_type} is not a defined metric")
+
+    return METRICS[metric_type](**metric.get("kwargs", {}))
+
+
+def build_metric_bindings(config) -> list[MetricBinding]:  # noqa: ANN001
+    metric_bindings = [
+        MetricBinding(
+            metric_config["name"], build_metric(metric_config), metric_config["inputs"]
+        )
+        for metric_config in config
+    ]
+
+    return metric_bindings

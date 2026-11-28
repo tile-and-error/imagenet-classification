@@ -1,14 +1,17 @@
 import copy
 import json
+from pathlib import Path
+from typing import Literal
 
 import pytest
 import torch
 from torch import nn
 
 from lwfm.core.graph import ExecutionGraph, ModelNode
-from lwfm.core.losses import LossBinding, LossComposer
+from lwfm.core.types import Batch
+from lwfm.loss.losses import LossBinding, LossComposer
 from lwfm.results.router import OutputRouter
-from lwfm.results.sinks import LocalFileSink
+from lwfm.results.sinks import LocalFileSink, OutputSink
 from lwfm.training import Callback, Trainer, TrainingResult, TrainingState
 from lwfm.training.callbacks import (
     EarlyStopping,
@@ -29,7 +32,13 @@ from conftest import (
 )
 
 
-def bare_state(graph, loss, optimizer, sink=None, metric_names=("top1",)):
+def bare_state(
+    graph: ExecutionGraph,
+    loss: LossComposer,
+    optimizer: torch.optim.Optimizer,
+    sink: OutputSink | None = None,
+    metric_names: tuple[str, ...] = ("top1",),
+) -> TrainingState:
     """A TrainingState for calling a callback's hooks directly, without a training
     loop."""
     return TrainingState(
@@ -45,12 +54,12 @@ def bare_state(graph, loss, optimizer, sink=None, metric_names=("top1",)):
 # --- LossWeightSchedule ---------------------------------------------------------
 
 
-def test_loss_weight_schedule_sets_the_weight_every_step():
+def test_loss_weight_schedule_sets_the_weight_every_step() -> None:
     node, graph, loss, optimizer = setup(weight=0.0)
     seen = []
 
     class Watch(Callback):  # runs after the schedule, so it sees the new weight
-        def on_step_start(self, state, batch):
+        def on_step_start(self, state: TrainingState, batch: Batch) -> None:
             seen.append(state.loss.loss_bindings[0].weight)
 
     ramp = LossWeightSchedule("ce", lambda step: min(1.0, step / 4))
@@ -60,7 +69,7 @@ def test_loss_weight_schedule_sets_the_weight_every_step():
     assert seen == [0.0, 0.25, 0.5, 0.75, 1.0]
 
 
-def test_loss_weight_schedule_rejects_an_unknown_binding():
+def test_loss_weight_schedule_rejects_an_unknown_binding() -> None:
     _, graph, loss, optimizer = setup()
     with pytest.raises(ValueError, match="no loss binding named 'kd'"):
         Trainer(device="cpu", max_steps=1).fit(
@@ -75,7 +84,7 @@ def test_loss_weight_schedule_rejects_an_unknown_binding():
 # --- EarlyStopping --------------------------------------------------------------
 
 
-def test_early_stopping_after_max_validations_without_improvement():
+def test_early_stopping_after_max_validations_without_improvement() -> None:
     # The metric never changes: validation 1 sets the best, 2 and 3 don't improve
     _, graph, loss, optimizer = setup()
     result = Trainer(device="cpu", max_epochs=10).fit(
@@ -90,7 +99,7 @@ def test_early_stopping_after_max_validations_without_improvement():
     assert (result.stop_reason, result.epochs_completed) == ("stopped", 3)
 
 
-def test_early_stopping_counts_from_the_last_improvement():
+def test_early_stopping_counts_from_the_last_improvement() -> None:
     _, graph, loss, optimizer = setup()
     stopper = EarlyStopping(
         "top1", max_validations_without_improvement=2, min_delta=0.05
@@ -105,12 +114,10 @@ def test_early_stopping_counts_from_the_last_improvement():
 
 
 @pytest.mark.parametrize("with_validation", [True, False])
-def test_monitored_metric_must_be_a_validation_metric(with_validation):
+def test_monitored_metric_must_be_a_validation_metric(with_validation: bool) -> None:
     _, graph, loss, optimizer = setup()
-    validation = (
-        {"val_loader": batches(1), "metrics": constant_metric()}
-        if with_validation
-        else {}
+    val_loader, metrics = (
+        (batches(1), constant_metric()) if with_validation else (None, [])
     )
     with pytest.raises(ValueError, match="monitors 'top1'"):
         Trainer(device="cpu", max_steps=1).fit(
@@ -119,7 +126,8 @@ def test_monitored_metric_must_be_a_validation_metric(with_validation):
             loss,
             optimizer,
             callbacks=[EarlyStopping("top1")],
-            **validation,
+            val_loader=val_loader,
+            metrics=metrics,
         )
 
 
@@ -135,11 +143,17 @@ def test_monitored_metric_must_be_a_validation_metric(with_validation):
         (0.47, 0.5, "min", 0.05, False),
     ],
 )
-def test_improved(value, best, goal, min_delta, expected):
+def test_improved(
+    value: float,
+    best: float,
+    goal: Literal["max", "min"],
+    min_delta: float,
+    expected: bool,
+) -> None:
     assert improved(value, best, goal, min_delta) is expected
 
 
-def test_goal_must_be_max_or_min(tmp_path):
+def test_goal_must_be_max_or_min(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="'max' or 'min'"):
         EarlyStopping("top1", goal="maximum")  # type: ignore[arg-type]  # deliberate
     with pytest.raises(ValueError, match="'max' or 'min'"):
@@ -151,7 +165,7 @@ def test_goal_must_be_max_or_min(tmp_path):
         )
 
 
-def test_callbacks_start_afresh_in_every_fit(tmp_path):
+def test_callbacks_start_afresh_in_every_fit(tmp_path: Path) -> None:
     # The same callback instances in two fits. Each fit must reset them: otherwise
     # the second fit inherits the first's best value, stops one validation early
     # and never saves best.pt.
@@ -182,7 +196,9 @@ def test_callbacks_start_afresh_in_every_fit(tmp_path):
 # --- ModelCheckpoint ------------------------------------------------------------
 
 
-def test_checkpoint_saves_best_only_on_improvement(tmp_path, sink):
+def test_checkpoint_saves_best_only_on_improvement(
+    tmp_path: Path, sink: ListSink
+) -> None:
     node, graph, loss, optimizer = setup()
     checkpoint = ModelCheckpoint(tmp_path, node="student", monitored_metric="top1")
     state = bare_state(graph, loss, optimizer, sink)
@@ -201,7 +217,7 @@ def test_checkpoint_saves_best_only_on_improvement(tmp_path, sink):
     classifier().load_state_dict(weights)
 
 
-def test_checkpoint_last_holds_the_full_training_state(tmp_path):
+def test_checkpoint_last_holds_the_full_training_state(tmp_path: Path) -> None:
     _, graph, loss, optimizer = setup()
     checkpoint = ModelCheckpoint(tmp_path, node="student")  # no monitored metric
     state = bare_state(graph, loss, optimizer)
@@ -224,7 +240,9 @@ def test_checkpoint_last_holds_the_full_training_state(tmp_path):
     assert (last["global_step"], last["epoch"]) == (7, 2)
 
 
-def test_checkpoint_last_weights_hold_only_the_node(tmp_path, sink):
+def test_checkpoint_last_weights_hold_only_the_node(
+    tmp_path: Path, sink: ListSink
+) -> None:
     student, graph, loss, optimizer = setup()
     teacher = ModelNode(
         "teacher", classifier(), inputs="inputs.image", outputs="z", frozen=True
@@ -246,7 +264,7 @@ def test_checkpoint_last_weights_hold_only_the_node(tmp_path, sink):
         assert torch.equal(got, want)
 
 
-def test_checkpoint_without_save_last_writes_no_last(tmp_path):
+def test_checkpoint_without_save_last_writes_no_last(tmp_path: Path) -> None:
     _, graph, loss, optimizer = setup()
     checkpoint = ModelCheckpoint(tmp_path, node="student", save_last=False)
     state = bare_state(graph, loss, optimizer)
@@ -256,7 +274,9 @@ def test_checkpoint_without_save_last_writes_no_last(tmp_path):
     assert not (tmp_path / "checkpoints/last_weights.pt").exists()
 
 
-def test_checkpoint_goal_min_saves_when_the_metric_falls(tmp_path, sink):
+def test_checkpoint_goal_min_saves_when_the_metric_falls(
+    tmp_path: Path, sink: ListSink
+) -> None:
     _, graph, loss, optimizer = setup()
     checkpoint = ModelCheckpoint(
         tmp_path, node="student", monitored_metric="loss", goal="min"
@@ -269,7 +289,7 @@ def test_checkpoint_goal_min_saves_when_the_metric_falls(tmp_path, sink):
     assert [e.step for e in sink.events if e.name == "checkpoint/best"] == [1, 2, 4]
 
 
-def test_checkpoint_in_a_real_run_records_artifacts(tmp_path):
+def test_checkpoint_in_a_real_run_records_artifacts(tmp_path: Path) -> None:
     _, graph, loss, optimizer = setup()
     with OutputRouter(LocalFileSink(tmp_path)) as sink:
         Trainer(device="cpu", max_epochs=2).fit(
@@ -294,7 +314,7 @@ def test_checkpoint_in_a_real_run_records_artifacts(tmp_path):
     ]
 
 
-def test_checkpoint_rejects_an_unknown_node(tmp_path):
+def test_checkpoint_rejects_an_unknown_node(tmp_path: Path) -> None:
     _, graph, loss, optimizer = setup()
     with pytest.raises(ValueError, match="'teacher'"):
         ModelCheckpoint(tmp_path, node="teacher").on_fit_start(
@@ -305,7 +325,7 @@ def test_checkpoint_rejects_an_unknown_node(tmp_path):
 # --- EMAUpdate ------------------------------------------------------------------
 
 
-def ema_graph():
+def ema_graph() -> tuple[ModelNode, ModelNode, ExecutionGraph]:
     """A student and a frozen copy of it as teacher, with the teacher's weights set
     to 1 so an EMA update visibly moves them."""
     torch.manual_seed(0)
@@ -324,13 +344,13 @@ def ema_graph():
     return student, teacher, ExecutionGraph([student, teacher])
 
 
-def test_ema_moves_the_target_towards_the_source():
+def test_ema_moves_the_target_towards_the_source() -> None:
     student, teacher, graph = ema_graph()
     loss = LossComposer([LossBinding("ce", nn.CrossEntropyLoss(), CE_READS)])
     expected = []
 
     class Expect(Callback):  # registered first, so it sees the weights before EMA
-        def on_after_optimizer_step(self, state):
+        def on_after_optimizer_step(self, state: TrainingState) -> None:
             expected.append(
                 [
                     0.9 * t + 0.1 * s
@@ -353,7 +373,7 @@ def test_ema_moves_the_target_towards_the_source():
         assert torch.equal(b_teacher, b_student)  # BatchNorm statistics copied
 
 
-def test_ema_rejects_different_architectures():
+def test_ema_rejects_different_architectures() -> None:
     student = ModelNode("student", classifier(), inputs="inputs.image", outputs="z")
     other = ModelNode(
         "teacher",
@@ -363,17 +383,18 @@ def test_ema_rejects_different_architectures():
         frozen=True,
     )
     graph = ExecutionGraph([student, other])
-    state = bare_state(graph, None, None)
+    state = bare_state(graph, None, None)  # type: ignore[arg-type]  # unused by EMA
     with pytest.raises(ValueError, match="same architecture"):
         EMAUpdate("student", "teacher").on_fit_start(state)
 
 
-def test_ema_rejects_an_unknown_node():
+def test_ema_rejects_an_unknown_node() -> None:
     _, _, graph = ema_graph()
+    state = bare_state(graph, None, None)  # type: ignore[arg-type]  # unused by EMA
     with pytest.raises(ValueError, match="no node 'techer'"):
-        EMAUpdate("student", "techer").on_fit_start(bare_state(graph, None, None))
+        EMAUpdate("student", "techer").on_fit_start(state)
 
 
-def test_ema_rejects_a_bad_momentum():
+def test_ema_rejects_a_bad_momentum() -> None:
     with pytest.raises(ValueError, match="momentum"):
         EMAUpdate("student", "teacher", momentum=1.5)

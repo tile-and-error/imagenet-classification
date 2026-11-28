@@ -1,9 +1,12 @@
+from pathlib import Path
+
 import torch
+from matplotlib.axes import Axes
 from torch import nn
 
 from lwfm.core.graph import ExecutionGraph, ModelNode
-from lwfm.core.losses import LossBinding, LossComposer
 from lwfm.evaluation.metrics import CurveBinding
+from lwfm.loss.losses import LossBinding, LossComposer
 from lwfm.results.curves import ConfusionMatrix, Lines, PRCurve, ROCCurve
 from lwfm.results.events import RunEvent
 from lwfm.results.plots import PlotSink
@@ -13,13 +16,13 @@ from lwfm.training import Trainer
 from conftest import CE_READS, accuracy, batches, is_png, setup
 
 
-def png_names(plot_dir):
+def png_names(plot_dir: Path) -> list[str]:
     paths = sorted(plot_dir.glob("*.png"))
     assert all(is_png(path) for path in paths)
     return [path.name for path in paths]
 
 
-def test_scalars_and_curves_become_one_png_each(tmp_path):
+def test_scalars_and_curves_become_one_png_each(tmp_path: Path) -> None:
     sink = PlotSink(tmp_path / "plots")
     for step, loss in enumerate([1.0, 0.5, 0.25], start=1):
         sink.write(
@@ -34,7 +37,7 @@ def test_scalars_and_curves_become_one_png_each(tmp_path):
     assert sink.scalar_series["train/loss/total"] == [(1, 1.0), (2, 0.5), (3, 0.25)]
 
 
-def test_events_that_cannot_be_plotted_are_ignored(tmp_path):
+def test_events_that_cannot_be_plotted_are_ignored(tmp_path: Path) -> None:
     sink = PlotSink(tmp_path)
     sink.write(RunEvent("scalar", "eval/test/top1", 0.9))  # no step
     sink.write(RunEvent("table", "per_class", [[0, 0.9], [1, 0.8]]))  # no draw
@@ -44,7 +47,7 @@ def test_events_that_cannot_be_plotted_are_ignored(tmp_path):
     assert png_names(tmp_path) == []
 
 
-def test_curve_types_are_drawn(tmp_path):
+def test_curve_types_are_drawn(tmp_path: Path) -> None:
     sink = PlotSink(tmp_path)
     sink.write(
         RunEvent("table", "roc", ROCCurve([0.0, 0.2, 1.0], [0.0, 0.8, 1.0], 0.8))
@@ -63,9 +66,9 @@ def test_curve_types_are_drawn(tmp_path):
     ]
 
 
-def test_a_table_with_a_draw_method_draws_itself(tmp_path):
+def test_a_table_with_a_draw_method_draws_itself(tmp_path: Path) -> None:
     class Dots:
-        def draw(self, axes):
+        def draw(self, axes: Axes) -> None:
             axes.scatter([0, 1], [1, 0])
 
     sink = PlotSink(tmp_path)
@@ -73,7 +76,7 @@ def test_a_table_with_a_draw_method_draws_itself(tmp_path):
     assert png_names(tmp_path) == ["eval_val_dots_step5.png"]
 
 
-def test_each_validation_step_keeps_its_own_table_plot(tmp_path):
+def test_each_validation_step_keeps_its_own_table_plot(tmp_path: Path) -> None:
     sink = PlotSink(tmp_path)
     for step in [100, 200]:
         roc = ROCCurve([0.0, 1.0], [0.0, 1.0], 0.5)
@@ -84,13 +87,13 @@ def test_each_validation_step_keeps_its_own_table_plot(tmp_path):
     ]
 
 
-def test_close_is_safe_to_call_twice(tmp_path):
+def test_close_is_safe_to_call_twice(tmp_path: Path) -> None:
     sink = PlotSink(tmp_path)
     sink.close()
     sink.close()
 
 
-def test_a_training_run_plots_its_losses(tmp_path):
+def test_a_training_run_plots_its_losses(tmp_path: Path) -> None:
     torch.manual_seed(0)
     node = ModelNode("student", nn.Linear(2, 2), inputs="inputs.x", outputs="logits")
     batch = {
@@ -111,7 +114,7 @@ def test_a_training_run_plots_its_losses(tmp_path):
     assert "train_loss_total.png" in png_names(tmp_path)
 
 
-def test_a_training_run_plots_its_curves_at_each_validation(tmp_path):
+def test_a_training_run_plots_its_curves_at_each_validation(tmp_path: Path) -> None:
     _, graph, loss, optimizer = setup()
     confusion = CurveBinding("confusion", ConfusionMatrix.from_scores, CE_READS)
     with OutputRouter(PlotSink(tmp_path)) as sink:

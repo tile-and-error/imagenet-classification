@@ -1,17 +1,21 @@
+from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import NoReturn
 
 import pytest
 import torch
-from torch import nn
+from matplotlib.axes import Axes
+from torch import Tensor, nn
 from torchmetrics.classification import MulticlassAccuracy
 
 from lwfm.core.batch import to_device
 from lwfm.core.graph import ExecutionGraph, GraphError, ModelNode
+from lwfm.core.types import Batch
 from lwfm.evaluation.evaluator import Evaluator
 from lwfm.evaluation.metrics import CurveBinding, MetricBinding
 from lwfm.results.curves import ConfusionMatrix
 
-from conftest import CE_READS
+from conftest import CE_READS, ListSink
 
 CPU = torch.device("cpu")
 
@@ -29,7 +33,7 @@ LOGITS = torch.tensor(
 CLASSES = torch.tensor([0, 1, 5, 2])
 
 
-def batch(rows):
+def batch(rows: list[int]) -> Batch:
     return {
         "inputs": {"logits": LOGITS[rows]},
         "targets": {"class": CLASSES[rows]},
@@ -41,36 +45,36 @@ def batch(rows):
 LOADER = [batch([0, 1, 2]), batch([3])]
 
 
-def logits_graph(module=None):
+def logits_graph(module: nn.Module | None = None) -> ExecutionGraph:
     node = ModelNode("student", module or nn.Identity(), "inputs.logits", "logits")
     return ExecutionGraph([node], preflight_sample=LOADER[0])
 
 
-def top_k(k):
+def top_k(k: int) -> MetricBinding:
     return MetricBinding(
         f"top{k}", MulticlassAccuracy(num_classes=6, top_k=k, average="micro"), CE_READS
     )
 
 
 class Probe(nn.Module):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.linear = nn.Linear(6, 6)
         self.seen_modes = []
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         self.seen_modes.append((self.training, torch.is_inference_mode_enabled()))
         return self.linear(x)
 
 
-def test_micro_top1_top5_match_hand_worked_example():
+def test_micro_top1_top5_match_hand_worked_example() -> None:
     result = Evaluator().evaluate(
         logits_graph(), LOADER, [top_k(1), top_k(5)], device=CPU
     )
     assert result.metric_values == pytest.approx({"top1": 0.5, "top5": 0.75})
 
 
-def test_metric_state_resets_between_runs():
+def test_metric_state_resets_between_runs() -> None:
     metrics = [top_k(1)]
     first = Evaluator().evaluate(logits_graph(), LOADER, metrics, device=CPU)
     second = Evaluator().evaluate(logits_graph(), LOADER[1:], metrics, device=CPU)
@@ -78,7 +82,7 @@ def test_metric_state_resets_between_runs():
     assert second.metric_values["top1"] == 0.0
 
 
-def test_runs_in_eval_and_inference_mode_and_changes_no_weights():
+def test_runs_in_eval_and_inference_mode_and_changes_no_weights() -> None:
     probe = Probe()
     graph = logits_graph(probe)
     probe.seen_modes.clear()  # drop the build-time shape check
@@ -92,14 +96,14 @@ def test_runs_in_eval_and_inference_mode_and_changes_no_weights():
         torch.testing.assert_close(v, before[k], rtol=0, atol=0)
 
 
-def test_eval_mode_is_kept_if_graph_was_in_eval():
+def test_eval_mode_is_kept_if_graph_was_in_eval() -> None:
     graph = logits_graph().eval()
     Evaluator().evaluate(graph, LOADER, [top_k(1)], device=CPU)
     assert not graph.training
 
 
 @pytest.mark.parametrize("was_training", [True, False], ids=["train", "eval"])
-def test_mode_is_restored_when_a_metric_fails(was_training):
+def test_mode_is_restored_when_a_metric_fails(was_training: bool) -> None:
     # .train(False) is equivalent to .eval()
     graph = logits_graph().train(was_training)
     bad = MetricBinding("bad", MulticlassAccuracy(num_classes=6), ["targets.missing"])
@@ -108,7 +112,7 @@ def test_mode_is_restored_when_a_metric_fails(was_training):
     assert graph.training == was_training
 
 
-def test_values_are_emitted_as_eval_split_name(sink):
+def test_values_are_emitted_as_eval_split_name(sink: ListSink) -> None:
     Evaluator().evaluate(
         logits_graph(),
         LOADER,
@@ -143,16 +147,21 @@ def test_values_are_emitted_as_eval_split_name(sink):
     ],
     ids=["empty_loader", "no_metrics", "duplicate_names", "non_scalar_metric"],
 )
-def test_bad_inputs_fail_clearly(loader, metrics, error, match):
+def test_bad_inputs_fail_clearly(
+    loader: list[Batch],
+    metrics: list[MetricBinding],
+    error: type[Exception],
+    match: str,
+) -> None:
     with pytest.raises(error, match=match):
         Evaluator().evaluate(logits_graph(), loader, metrics, device=CPU)
 
 
-def confusion():
+def confusion() -> CurveBinding:
     return CurveBinding("confusion", ConfusionMatrix.from_scores, CE_READS)
 
 
-def test_a_curve_is_built_from_the_whole_split_and_emitted(sink):
+def test_a_curve_is_built_from_the_whole_split_and_emitted(sink: ListSink) -> None:
     result = Evaluator().evaluate(
         logits_graph(),
         LOADER,  # two unequal batches
@@ -170,7 +179,7 @@ def test_a_curve_is_built_from_the_whole_split_and_emitted(sink):
     ]
 
 
-def test_curve_values_reset_between_runs():
+def test_curve_values_reset_between_runs() -> None:
     curves = [confusion()]
     Evaluator().evaluate(
         logits_graph(), LOADER, [top_k(1)], curve_bindings=curves, device=CPU
@@ -178,17 +187,19 @@ def test_curve_values_reset_between_runs():
     second = Evaluator().evaluate(
         logits_graph(), LOADER[1:], [top_k(1)], curve_bindings=curves, device=CPU
     )
-    assert sum(map(sum, second.curves["confusion"].matrix)) == 1  # one sample
+    confusion_matrix = second.curves["confusion"]
+    assert isinstance(confusion_matrix, ConfusionMatrix)
+    assert sum(map(sum, confusion_matrix.matrix)) == 1  # one sample
 
 
-def test_curves_alone_need_no_metric():
+def test_curves_alone_need_no_metric() -> None:
     result = Evaluator().evaluate(
         logits_graph(), LOADER, [], curve_bindings=[confusion()], device=CPU
     )
     assert result.metric_values == {} and list(result.curves) == ["confusion"]
 
 
-def test_a_curve_and_a_metric_cannot_share_a_name():
+def test_a_curve_and_a_metric_cannot_share_a_name() -> None:
     clash = CurveBinding("top1", ConfusionMatrix.from_scores, CE_READS)
     with pytest.raises(ValueError, match="unique"):
         Evaluator().evaluate(
@@ -200,11 +211,11 @@ def test_a_curve_and_a_metric_cannot_share_a_name():
 class Shapes:
     shapes: list[list[int]]
 
-    def draw(self, axes):
+    def draw(self, axes: Axes) -> None:
         pass
 
 
-def test_a_curve_reads_any_number_of_values_in_order():
+def test_a_curve_reads_any_number_of_values_in_order() -> None:
     shapes = CurveBinding(
         "shapes",
         lambda *values: Shapes([list(value.shape) for value in values]),
@@ -213,11 +224,13 @@ def test_a_curve_reads_any_number_of_values_in_order():
     result = Evaluator().evaluate(
         logits_graph(), LOADER, [top_k(1)], curve_bindings=[shapes], device=CPU
     )
-    assert result.curves["shapes"].shapes == [[4, 6], [4], [4, 6]]  # batches joined
+    built = result.curves["shapes"]
+    assert isinstance(built, Shapes)
+    assert built.shapes == [[4, 6], [4], [4, 6]]  # batches joined
 
 
-def test_a_failing_curve_names_itself_and_what_it_read():
-    def broken(scores, labels):
+def test_a_failing_curve_names_itself_and_what_it_read() -> None:
+    def broken(scores: Tensor, labels: Tensor) -> NoReturn:
         raise RuntimeError("bad curve")
 
     curve = CurveBinding("broken", broken, CE_READS)
@@ -230,28 +243,31 @@ def test_a_failing_curve_names_itself_and_what_it_read():
     assert caught.value.__notes__ == [note]
 
 
-def test_a_curve_must_build_something_drawable():
-    plain = CurveBinding("plain", lambda scores, labels: {"n": len(scores)}, CE_READS)
+def test_a_curve_must_build_something_drawable() -> None:
+    def plain_dict(scores: Tensor, labels: Tensor) -> dict[str, int]:
+        return {"n": len(scores)}
+
+    plain = CurveBinding("plain", plain_dict, CE_READS)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="'plain' built a dict, which has no draw"):
         Evaluator().evaluate(
             logits_graph(), LOADER, [top_k(1)], curve_bindings=[plain], device=CPU
         )
 
 
-def test_a_curve_must_read_what_its_build_function_takes():
+def test_a_curve_must_read_what_its_build_function_takes() -> None:
     with pytest.raises(ValueError, match="reads 1 values"):
         CurveBinding("roc", ConfusionMatrix.from_scores, ["student.logits"])
 
 
-def test_to_device_moves_tensors_and_keeps_other_values():
+def test_to_device_moves_tensors_and_keeps_other_values() -> None:
     moved = to_device(batch([0, 1]), torch.device("meta"))
     assert moved["inputs"]["logits"].device.type == "meta"
     assert moved["targets"]["class"].device.type == "meta"
     assert moved["meta"]["sample_id"] == ["s0", "s1"]
 
 
-def test_unknown_metric_input_fails_before_any_batch():
-    def loader():
+def test_unknown_metric_input_fails_before_any_batch() -> None:
+    def loader() -> Iterator[Batch]:
         raise AssertionError("no batch should be read")
         yield
 

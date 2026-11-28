@@ -1102,7 +1102,7 @@ The resource lines are an **example**, not DCS partition, GPU or time settings; 
 6. Check that an existing baseline config still runs unchanged.
 7. Document what was measured, the limits, training-only versus deployment cost, and any licence issues.
 
-**Code style:** type hints; docstrings only where the code isn't self-explanatory; Python `logging`, not `print()`, in library code; deterministic fixtures; `ruff` for formatting and lint; review for any change to `core/` interfaces. Don't freeze an API before both the single-model and one-teacher workflows have used it.
+**Code style:** type hints on every parameter and return, tests included (`ruff` rules `ANN0`/`ANN2` require them, `pyright` checks them; a hint too vague to help, e.g. `dict[str, Any]`, is left out with `# noqa: ANN001` until a proper type exists); docstrings only where the code isn't self-explanatory; Python `logging`, not `print()`, in library code; deterministic fixtures; `ruff` for formatting and lint; review for any change to `core/` interfaces. Don't freeze an API before both the single-model and one-teacher workflows have used it.
 
 ### Suggested split of work
 

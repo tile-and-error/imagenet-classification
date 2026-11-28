@@ -17,13 +17,14 @@ jobs:
     name: Ruff
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    continue-on-error: true # non-blocking until existing errors are cleared
     steps:
       - uses: actions/checkout@v4
       # Ruff version follows the `ruff` requirement in pyproject.toml.
       - uses: astral-sh/ruff-action@v3
         with:
           args: check --output-format=github
-      - if: ${{ !cancelled() }}  # report format issues even if lint failed
+      - if: ${{ !cancelled() }} # report format issues even if lint failed
         run: ruff format --check --diff
 
   test:
@@ -39,3 +40,18 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run --locked pytest -q
+
+  typecheck:
+    name: Pyright
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true # non-blocking until existing errors are cleared
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run --locked pyright

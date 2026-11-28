@@ -24,11 +24,12 @@
 <h1>15. Callbacks: changing training without changing the loop</h1>
 
 <p class="lead">A <code class="l">Callback</code> is an object whose <code>on_*</code> methods the trainer calls at fixed points. Each one receives the <code class="l">TrainingState</code>: the graph, the optimizer, the step counters and the latest metrics.</p>
-<pre class="code"><code class="language-python">from lwfm.training import Callback                         # lwfm
+<pre class="code"><code class="language-python">from lwfm.training import Callback, TrainingState          # lwfm
 from lwfm.training.callbacks import EarlyStopping          # lwfm: a ready-made callback
 
 class PrintValidation(Callback):
-    def on_validation_end(self, state, metrics):           # override only the hooks you need
+    # override only the hooks you need
+    def on_validation_end(self, state: TrainingState, metrics: dict[str, float]) -> None:
         top1 = metrics[&quot;top1&quot;]
         print(f&quot;epoch {state.epoch}, step {state.global_step}: top1 = {top1:.3f}&quot;)
 

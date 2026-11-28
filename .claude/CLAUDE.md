@@ -34,9 +34,12 @@ Every component is built on standard PyTorch primitives and nothing else — mod
 ## Style
 
 Concise, mathematical, specific. Check claims rather than build on them. `ruff` owns
-formatting and lint (see `pyproject.toml`). Keep the code self-documenting, don't add docstrings
-when you don't need to. An exception is the notenook `.ipynb` files, which need more explanations,
-and so heavier on comments.
+formatting and lint (see `pyproject.toml`), including a type hint on every parameter and
+return; `pyright` checks the hints are right. Leave out a hint too vague to help (e.g.
+`dict[str, Any]` that isn't a named alias) and mark the line `# noqa: ANN001` / `ANN201`
+instead. Keep the code self-documenting, don't add docstrings when you don't need to. An
+exception is the notenook `.ipynb` files, which need more explanations, and so heavier on
+comments.
 
 ## Running code
 
