@@ -4,7 +4,7 @@ name:
   NAME OF EXPERIMENT # QUESTION: Why not just use this as the output dir (root in output later in config)?
   # Or something which is a function of this (e.g., include datetime)?
 seed: 42
-device: cuda
+device: cuda # NOTE: different partitions have different GPUs available and CPU cores
 models:
   student: # node name; outputs are student.<write>
     # All nodes require inputs and outputs, which are coalesced to Name | Sequence[Name] (as in building blocks)
@@ -13,7 +13,10 @@ models:
     frozen: false # frozen makes more sense than pretrained in terms of objective
     # Any other (potential parameters) should only be passed in through 'params'.
     # Can be omitted if none, and coalesced to empty dictionary. Although, can just be forced to be explicit.
-    params:
+    params: # hyperparameters e.g., number of layers for resnet student
+  student_ema:
+    inputs: inputs.image
+    outputs: logits
   teacher:
     inputs: inputs.image
     outputs: logits

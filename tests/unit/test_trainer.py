@@ -658,8 +658,14 @@ def test_json_safe_values_leaves_out_what_json_cannot_hold() -> None:
         "betas": (0.9, 0.99),
         "foreach": None,
         "odd": [object()],
+        "nested": {"names": ("student", "teacher")},
+        "nan": float("nan"),
     }
-    assert json_safe_values(settings) == {"betas": [0.9, 0.99], "foreach": None}
+    assert json_safe_values(settings) == {
+        "betas": [0.9, 0.99],
+        "foreach": None,
+        "nested": {"names": ["student", "teacher"]},
+    }
 
 
 # --- result and seeding ---------------------------------------------------------

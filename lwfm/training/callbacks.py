@@ -1,6 +1,6 @@
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 from torch import Tensor
@@ -249,7 +249,11 @@ class ModelCheckpoint(Callback):
         return state.graph.deployable_model(self.node).state_dict()
 
     def _save(
-        self, state: "TrainingState", contents, path: Path, event_name: str
+        self,
+        state: "TrainingState",
+        contents: dict[str, Any],
+        path: Path,
+        event_name: str,
     ) -> None:
         save_artifact(
             self.run_dir,

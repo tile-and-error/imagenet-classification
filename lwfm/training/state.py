@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import torch
 from torch import Tensor
@@ -76,7 +76,7 @@ class TrainingState:
         for callback in self.callbacks:
             getattr(callback, hook)(self, *args)
 
-    def state_dict(self):
+    def state_dict(self) -> dict[str, Any]:
         """Tensors and plain values only, so `torch.load(..., weights_only=True)` can
         read it back. The whole graph is saved, teachers included: an EMA teacher
         changes during training."""
